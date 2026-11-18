@@ -478,6 +478,10 @@ async function consumeCanvasPreviewRequest() {
   log.info('design_preview_request', 'Consuming Proposal Design preview request.', {
     opId, proposalId: req.proposalId, bcId: req.bcId, targetNodeId: req.targetNodeId,
   })
+  if (req.full) {
+    await consumeFullDesignPreview(req, opId)
+    return
+  }
   try {
     // 043-fix3: 적용 후 갱신(keepPanel)은 현재 선택/뷰포트를 보존한다 — 캔버스만 다시 그리고
     // 포커스를 옮기지 않는다(AI 채팅 변경 시 엉뚱한 노드로 포커스 점프 방지).
@@ -522,6 +526,42 @@ async function consumeCanvasPreviewRequest() {
   } catch (e) {
     log.error('design_preview_error', 'Failed to load Proposal Design preview.', { opId, error: String(e) })
     window.alert(`Design 미리보기를 불러오지 못했습니다: ${e?.message || e}`)
+  }
+}
+
+// B-4 ⑧ 전체 미리보기 — 제안이 건드리는 BC 마다 기존 design-preview 투영을 받아 한 캔버스에 겹친다.
+// 포커스 대상은 없다(전체 맞춤). 한 BC 가 실패해도 나머지는 그린다 — 실패한 BC 는 알린다.
+async function consumeFullDesignPreview(req, opId) {
+  const pid = encodeURIComponent(req.proposalId)
+  const results = await Promise.all((req.bcIds || []).map(async (bcId) => {
+    try {
+      const res = await fetch(`/api/proposals/${pid}/preview/design/${encodeURIComponent(bcId)}/graph`)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      return { bcId, graph: await res.json() }
+    } catch (e) {
+      return { bcId, error: String(e?.message || e) }
+    }
+  }))
+  const ok = results.filter((r) => r.graph)
+  const failed = results.filter((r) => r.error)
+  log.info('design_full_preview', 'Full proposal design preview projected.', {
+    opId, proposalId: req.proposalId, bcCount: results.length, failed: failed.length,
+  })
+  if (!ok.length) {
+    window.alert(`Design 전체 미리보기를 불러오지 못했습니다: ${failed.map((f) => `${f.bcId}(${f.error})`).join(', ')}`)
+    return
+  }
+  canvasStore.beginPreview()
+  canvasStore.clearCanvas()
+  for (const { graph } of ok) {
+    canvasStore.addNodesWithLayout(graph.nodes || [], graph.relationships || [], graph.bcContext || null)
+  }
+  await nextTick()
+  setTimeout(() => {
+    try { fitView({ padding: 0.2, duration: 400 }) } catch { /* noop */ }
+  }, 200)
+  if (failed.length) {
+    window.alert(`일부 BC 는 미리보기를 못 그렸습니다: ${failed.map((f) => f.bcId).join(', ')}`)
   }
 }
 
