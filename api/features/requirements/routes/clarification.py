@@ -39,6 +39,7 @@ from api.features.requirements.clarification_agent.clarification_flags import (
 )
 from api.features.requirements.clarification_agent.clarity_score import (
     compute_clarity_scores_for_scope,
+    overall_clarity,
 )
 from api.features.requirements.clarification_agent.clarification_log import (
     append_log_entry,
@@ -947,19 +948,22 @@ async def get_clarification_clarity(
 
     us_ids = [node.id for node in user_story_nodes]
     raw = compute_clarity_scores_for_scope(us_ids, scopeType.value, scopeId)
-    overall = sum(s.score for s in raw.scores) / max(1, len(raw.scores))
+    overall = overall_clarity(raw)
 
     response = ClarityScoresResponse(
         scope=ClarificationScope(scopeType=scopeType, scopeId=scopeId, scopeName=scope_name),
         totalUserStories=raw.totalUserStories,
         flaggedUserStories=raw.flaggedUserStories,
         resolvedUserStories=raw.resolvedUserStories,
-        overallScore=round(overall, 3),
+        resolvedSessions=raw.resolvedSessions,
+        scanned=raw.scanned,
+        overallScore=overall,
         scores=[
             CategoryClarityScore(
                 category=s.category,
                 score=s.score,
                 status=s.status,
+                scanned=s.scanned,
                 flaggedCount=s.flaggedCount,
                 resolvedCount=s.resolvedCount,
             )
