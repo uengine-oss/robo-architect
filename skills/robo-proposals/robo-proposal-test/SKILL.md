@@ -78,6 +78,11 @@ Tactical Diff의 각 요소가 샌드박스 구현체에 의도대로 반영됐�
 지원하지 않는 언어이거나 Tactical Diff가 비어 있으면 해당 구조 검증만 생략하고 인수 조건은 계속 판정한다.
 Java/Avro는 지원 언어이므로 파일을 찾은 뒤 추출기 실행 없이 `SKIPPED`로 처리하면 안 된다.
 
+## 부분 재검증 (Human Prompt 에 "**부분 재검증**" 이 있을 때)
+- 프롬프트에 적힌 항목**만** 판정한다. 다른 항목을 새로 만들지 않는다.
+- 각 item 의 `scenarioId` 는 **주어진 값 그대로** 쓴다(새 번호 금지) — 서버가 이 id 로 기존 결과에 병합한다.
+- `previousResult`/`previousReason` 은 직전 판정이다. 코드가 그 사유를 해소했는지 다시 확인한다.
+
 ## Rules
 - LLM 판단이므로 100% 정확성 보장 없음. FAIL 시 반드시 `reason`에 근거 제시.
 - `totalScenarios = passed + failed + skipped` (acceptance + structural 합산).
