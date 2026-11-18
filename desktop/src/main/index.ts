@@ -27,7 +27,7 @@ import { desktopProfile, desktopProfileSource, isLiteProfile } from "./desktop-p
 import { revealFigmaPlugin } from "./figma-plugin";
 import { adoptHostPath } from "./host-path";
 import { backendLogLines, disableConsoleMirror, initLogging, log, revealLogs } from "./logging";
-import { isStreamingResponse } from "./proxy-stream";
+import { isStreamingResponse, planRequestBody } from "./proxy-stream";
 import { RuntimeRegistry } from "./runtime-state";
 import { RUNTIME_CHANNELS, type ManagedServiceId } from "../shared/runtime-contract";
 import {
@@ -465,6 +465,53 @@ function registerAppProtocol(): void {
           });
         }
       }
+      // 요청 본문 — 작은 것은 버퍼로 받아 넘긴다(planRequestBody 주석: Accept 422).
+      // 로그에는 **바이트 수만** 남긴다(값은 찍지 않는다). 0 이면 본문 유실이다.
+      const declaredLength = request.headers.get("content-length");
+      let bodyBytes: number | null = null;
+      let bodyPlan: string = "rewritten";
+      if (proxyBody === request.body) {
+        bodyPlan = planRequestBody({
+          method: request.method,
+          hasBody: request.body !== null,
+          headers: request.headers,
+        });
+        if (bodyPlan === "none") {
+          proxyBody = null;
+        } else if (bodyPlan === "buffer") {
+          try {
+            const buf = await request.arrayBuffer();
+            bodyBytes = buf.byteLength;
+            proxyBody = buf;
+            // 길이는 버퍼가 정한다 — 원본 Content-Length 를 그대로 보내지 않는다.
+            const headers = new Headers(proxyHeaders);
+            headers.delete("content-length");
+            proxyHeaders = headers;
+          } catch (err) {
+            log("warn", "protocol.api_proxy.body_buffer_failed", {
+              method: request.method,
+              pathname,
+              message: err instanceof Error ? err.message : String(err),
+            });
+            return new Response("Bad Request body", { status: 400 });
+          }
+        }
+      } else if (typeof proxyBody === "string") {
+        bodyBytes = Buffer.byteLength(proxyBody, "utf8");
+      }
+      if (bodyPlan !== "none") {
+        const declared = declaredLength === null ? null : Number(declaredLength);
+        const lost =
+          bodyPlan === "buffer" && bodyBytes === 0 && declared !== null && declared > 0;
+        log(lost ? "warn" : "info", "protocol.api_proxy.body", {
+          method: request.method,
+          pathname,
+          plan: bodyPlan,
+          bytes: bodyBytes,
+          declaredLength: declared,
+          ...(lost ? { hint: "Content-Length 는 있는데 본문이 비었다 — 본문 유실" } : {}),
+        });
+      }
       // 진단: 렌더러가 Neo4j override 헤더를 실었는지 (여기서 끊기면 프록시 문제).
       //
       // **method 를 함께 남긴다.** 전에는 경로만 남겨서 `GET /api/proposals/`(조회)
@@ -512,8 +559,8 @@ function registerAppProtocol(): void {
           signal: controller.signal,
           redirect: "manual",
           // duplex required when sending a streaming body — net.fetch follows
-          // the Web Fetch spec.
-          ...(proxyBody ? { duplex: "half" as const } : {}),
+          // the Web Fetch spec. 버퍼·문자열 본문에는 필요 없다.
+          ...(proxyBody instanceof ReadableStream ? { duplex: "half" as const } : {}),
         });
         // 결과까지 남긴다. 401·403·5xx 가 언제 몇 건 났는지가 사후에 가장
         // 자주 필요한 정보다 — 오늘 fail-open 을 이 줄들로 확인했다.
