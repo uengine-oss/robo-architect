@@ -19,9 +19,9 @@ Robo Architect Lite 의 셋째 런타임 구성이다. 그래프는 Apache AGE �
 |---|---|---|
 | graphDb | `uengine/supabase-postgres-age:15.8.1.060-age1.8.0` | `ontological-fabric` 의 `age-supabase/build.sh` (가지 `age/main`) |
 | graphBolt | `uengine/ontological-bolt:age` | 같은 곳 `age-supabase/gateway/build.sh` |
-| fabric | `ogfab-service:dev` | `/Users/uengine/og-fabric`: `docker build -t ogfab-service:dev service/` |
-| fabricDb | `ogfab-db:dev` | `/Users/uengine/og-fabric`: `image/build-local.sh --work <dir>` |
-| catalog | `uengine/robo-data-catalog:age-fabric` | `docker build -t uengine/robo-data-catalog:age-fabric robo-analyzer/robo-data-catalog` (하위 모듈 가지 `feat/age-fabric`) |
+| fabric | `ogfab-service:stage4` | `/Users/uengine/og-fabric` 가지 `stage4`: `docker build -t ogfab-service:stage4 service/` |
+| fabricDb | `ogfab-db:stage4` | `/Users/uengine/og-fabric` 가지 `stage4`: `image/build-local.sh --work <dir>`. 서비스와 같은 커밋에서 굽는다(옛 `ogfab-db:dev` 는 `cf57257` · `c9040ae` 이전 판이라 표본이 42501) |
+| catalog | `uengine/robo-data-catalog:age-fabric` | `git -C robo-analyzer/robo-data-catalog archive feat/age-fabric \| docker build -t uengine/robo-data-catalog:age-fabric -` — 하위 모듈의 **가지**에서 굽는다. 상위 저장소의 catalog 핀은 `1f1aaa6` 그대로다(아래 「catalog 핀」) |
 | analyzer · parser · gateway | `uengine/robo-analyzer` · `robo-antlr-parser` · `robo-api-gateway` `:lite-mac` | 기본 구성과 같다 |
 
 > ⚠ og-fabric 의 이미지는 og-fabric 의 지금 소스로 다시 구워야 한다. 4단계 시험 때 남아 있던 `ogfab-db:dev`(11-18 11:08)는 `cf57257`(읽기 전용 원천 계정의 기본 키) · `c9040ae`(`allow` 이름 찾기) 이전 판이었다. 그 판으로는 `GET …/tables/{t}/sample` 이 42501 이 된다. 시험에서는 확장만 다시 빌드해 `ogfab-db:stage4` 로 얹었다(아래 5절).
@@ -119,3 +119,10 @@ rm -rf $W
 - **catalog `/tables/resolve-context`.** robo-data-fabric 의 `object-resolution-context` 를 부르는데, og-fabric 에는 그 경로가 없다(404).
 - **출시 빌드.** 레지스트리 이름, `push-images`, amd64 이미지(og-fabric 둘 · AGE 둘), Windows 판이 없다.
 - **패키지 앱의 키체인.** safeStorage 대역으로만 돌렸다. 패키지된 macOS 앱이 판마다 키체인 접근을 묻는 것은 확인하지 않았다.
+
+## catalog 핀
+
+- `feat/age-fabric`(catalog 의 `40dee7a`)은 `feat/relationship-inference`(eaed1e8) 위에 있다. 그 가지에는 다른 사람의 커밋 13개가 있고, 기본 구성의 catalog 동작도 바꾼다(원천을 Bolt 패브릭 문장으로 읽음).
+- 「기존 Robo Architect 는 될 수 있으면 고치지 않는다」에 따라 **Lite 의 catalog 핀은 `1f1aaa6` 에 둔다.** `age-fabric` 용 catalog 이미지만 위의 명령으로 가지에서 따로 굽는다.
+- catalog 가지 `feat/age-fabric` 은 본 체크아웃(`/Users/uengine/robo-architect-lite/robo-analyzer/robo-data-catalog`)에도 받아 두었다. 이 작업 트리를 걷어도 가지가 남는다.
+- 기본 구성이 relinfer 를 받는 때는 `feat/relationship-inference` 를 따로 Lite 에 들일 때다. 이 구성과 묶지 않는다.

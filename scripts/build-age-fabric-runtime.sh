@@ -20,9 +20,11 @@
 # Images (key=ref; --image replaces one). Build the two that are not on this machine yet:
 #   graphDb    uengine/supabase-postgres-age:15.8.1.060-age1.8.0   (age-supabase/build.sh)
 #   graphBolt  uengine/ontological-bolt:age                        (age-supabase/gateway/build.sh)
-#   fabric     ogfab-service:dev                                   (og-fabric: docker build -t ogfab-service:dev service/)
-#   fabricDb   ogfab-db:dev                                        (og-fabric: image/build-local.sh)
-#   catalog    uengine/robo-data-catalog:age-fabric                (docker build -t … robo-analyzer/robo-data-catalog)
+#   fabric     ogfab-service:stage4                                (og-fabric stage4: docker build -t ogfab-service:stage4 service/)
+#   fabricDb   ogfab-db:stage4                                     (og-fabric stage4: image/build-local.sh; bake it from the same commit as the service)
+#   catalog    uengine/robo-data-catalog:age-fabric                (from the submodule BRANCH, not the pin:
+#              git -C robo-analyzer/robo-data-catalog archive feat/age-fabric | docker build -t uengine/robo-data-catalog:age-fabric -)
+#              The superproject keeps the catalog pin at 1f1aaa6 so the default configuration does not change.
 #   analyzer · parser · gateway  uengine/robo-analyzer · robo-antlr-parser · robo-api-gateway :lite-mac
 set -euo pipefail
 
@@ -73,8 +75,8 @@ images = {
     "graphBolt": "uengine/ontological-bolt:age",
     "analyzer":  "uengine/robo-analyzer:lite-mac",
     "catalog":   "uengine/robo-data-catalog:age-fabric",
-    "fabric":    "ogfab-service:dev",
-    "fabricDb":  "ogfab-db:dev",
+    "fabric":    "ogfab-service:stage4",
+    "fabricDb":  "ogfab-db:stage4",
     "parser":    "uengine/robo-antlr-parser:lite-mac",
     "gateway":   "uengine/robo-api-gateway:lite-mac",
 }
@@ -104,9 +106,9 @@ def image_id(ref: str) -> str:
         raise SystemExit(f"[runtime] the local image {ref} is missing — build it first (see the header)")
 
 
-def head(path: Path) -> str:
+def head(path: Path, ref: str = "HEAD") -> str:
     try:
-        return subprocess.check_output(["git", "-C", str(path), "rev-parse", "HEAD"], text=True,
+        return subprocess.check_output(["git", "-C", str(path), "rev-parse", ref], text=True,
                                        stderr=subprocess.DEVNULL).strip()
     except Exception:
         return "0" * 40
@@ -140,7 +142,7 @@ manifest = {
         "architect": head(root),
         "openPencil": head(root / "open-pencil"),
         "analyzer": head(root / "robo-analyzer/robo-data-analyzer"),
-        "catalog": head(root / "robo-analyzer/robo-data-catalog"),
+        "catalog": head(root / "robo-analyzer/robo-data-catalog", "feat/age-fabric"),  # image is built from this branch
         "fabric": head(og_fabric),               # og-fabric, not robo-data-fabric
         "frontend": head(root / "robo-analyzer/robo-data-frontend"),
         "parser": "0" * 40,
