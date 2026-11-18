@@ -46,7 +46,7 @@ $size = (Get-Item $tar).Length
 Write-Host ("묶음  {0}  {1:N0} B  sha256 {2}" -f $tar, $size, $hash.Substring(0, 8))
 
 # GitHub Release 자산은 한 개에 2 GiB 까지다 — 넘으면 조각으로(analyzer 에 재채점 모델이 들어간 뒤로 넘는다)
-$PartBytes = 1900MB
+[long]$PartBytes = 1900MB
 $uploads = @($tar)
 if ($size -gt $PartBytes) {
   $names = @()
@@ -58,9 +58,9 @@ if ($size -gt $PartBytes) {
       $name = '{0}.part{1:D2}' -f $Asset, $i
       $o = [IO.File]::Create((Join-Path $out $name))
       try {
-        $left = [Math]::Min($PartBytes, $in.Length - $in.Position)
+        $left = [Math]::Min([long]$PartBytes, [long]($in.Length - $in.Position))
         while ($left -gt 0) {
-          $n = $in.Read($buf, 0, [int][Math]::Min($buf.Length, $left))
+          $n = $in.Read($buf, 0, [int][Math]::Min([long]$buf.Length, [long]$left))
           $o.Write($buf, 0, $n); $left -= $n
         }
       } finally { $o.Close() }
