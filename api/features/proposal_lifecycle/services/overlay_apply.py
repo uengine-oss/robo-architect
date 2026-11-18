@@ -42,6 +42,16 @@ def _tag(node: dict, source: str) -> dict:
     return node
 
 
+def _field_text(item: dict, key: str) -> str:
+    """항목 최상위 또는 `fields` 안의 문자열 값(`{after: …}` 포맷 포함)."""
+    v = item.get(key)
+    if v is None:
+        v = (item.get("fields") or {}).get(key)
+    if isinstance(v, dict):
+        v = v.get("after")
+    return str(v) if isinstance(v, str) else ""
+
+
 def _tactical_index(tactical_diff: list[dict] | None) -> dict[str, dict]:
     """tacticalDiff 항목을 nodeId 기준으로 인덱싱(라이브 매칭용). nodeId 없는 CREATE 는 제외."""
     idx: dict[str, dict] = {}
@@ -186,9 +196,33 @@ def apply_data_overlay(live_tree: dict, proposal_id: str, tactical_diff: list[di
             aggregates.append(ghost)
             meta.append({"nodeId": str(nid), "source": SOURCE_CONFLICT, "changedFields": [], "badge": "충돌"})
 
-    # 3) 신규(CREATE) Aggregate/Command/Event 를 트리에 삽입(temp id)
+    # 3) 신규(CREATE) 항목을 트리에 삽입(temp id)
+    #    Aggregate/Command/Event + (B-4/D-5 ③) ReadModel/Policy/UI.
+    #    BC 소속이 적힌 항목은 **이 BC 트리에만** 넣는다 — 전체 미리보기(탐색기)는 BC 마다 이
+    #    함수를 부르므로, 거르지 않으면 신규 Aggregate 가 모든 BC 밑에 똑같이 나타난다.
+    bc_id = str(tree.get("id") or "")
+
+    def _other_bc(item: dict) -> bool:
+        own = str(item.get("boundedContextId") or "")
+        return bool(own and bc_id and own != bc_id)
+
+    for lst in ("readmodels", "policies", "uis"):
+        for live_node in tree.get(lst) or []:
+            if isinstance(live_node, dict) and "source" not in live_node:
+                lid = str(live_node.get("id") or "")
+                it = by_id.get(lid)
+                if it and (it.get("changeType") or "MODIFY") == "MODIFY":
+                    changed = _populate_from_deep_item(live_node, it)
+                    _tag(live_node, SOURCE_MODIFIED)
+                    meta.append({"nodeId": lid, "source": SOURCE_MODIFIED, "changedFields": changed,
+                                 "badge": live_node.get("badge")})
+                else:
+                    _tag(live_node, SOURCE_LIVE)
+
     for i, item in enumerate(tactical):
         if (item.get("changeType") or "") != "CREATE":
+            continue
+        if _other_bc(item):
             continue
         label = item.get("nodeLabel")
         nid = item.get("nodeId") or temp_id(proposal_id, i)
@@ -203,14 +237,48 @@ def apply_data_overlay(live_tree: dict, proposal_id: str, tactical_diff: list[di
             aggregates.append(new_agg)
             meta.append({"nodeId": nid, "source": SOURCE_TEMPORARY, "changedFields": [], "badge": "신규"})
         elif label in ("Command", "Event"):
-            # 신규 Command/Event 는 대상 Aggregate(있으면)에 붙이거나, 없으면 첫 Aggregate.
-            target_agg = aggregates[0] if aggregates else None
+            # 신규 Command/Event 는 대상 Aggregate(aggregateId 가 이 트리에 있으면 그것)에 붙이고,
+            # 참조가 없으면 첫 Aggregate. 참조가 있는데 이 트리에 없으면 다른 BC 소속이다 — 건너뛴다.
+            ref = str(item.get("aggregateId") or "")
+            if ref:
+                target_agg = next((a for a in aggregates if str(a.get("id") or "") == ref), None)
+                if target_agg is None:
+                    continue
+            else:
+                target_agg = aggregates[0] if aggregates else None
             child = {"id": nid, "name": title, "displayName": title, "type": label, "events": [], "properties": []}
             _populate_from_deep_item(child, item)
             _tag(child, SOURCE_TEMPORARY)
             if target_agg is not None:
                 bucket = "commands" if label == "Command" else "events"
                 target_agg.setdefault(bucket, []).append(child)
+            meta.append({"nodeId": nid, "source": SOURCE_TEMPORARY, "changedFields": [], "badge": "신규"})
+        elif label in ("ReadModel", "Policy", "UI"):
+            # BC 직속 노드 — full-tree 의 readmodels/policies/uis 목록에 그대로 꽂는다.
+            # (이전에는 Aggregate/Command/Event 만 넣어, 제안이 만든 UI 가 미리보기에 아예 없었다 — D-5 ①)
+            bucket = {"ReadModel": "readmodels", "Policy": "policies", "UI": "uis"}[label]
+            child = {"id": nid, "name": title, "displayName": title, "type": label}
+            if label == "UI":
+                desc = _field_text(item, "description")
+                if desc:
+                    child["description"] = desc
+                attached = (item.get("attachedToId") or item.get("triggersCommand")
+                            or item.get("displaysReadModel") or item.get("commandId")
+                            or item.get("readModelId"))
+                if attached:
+                    child["attachedToId"] = str(attached)
+            elif label == "Policy":
+                trig = item.get("triggerEventId") or item.get("whenEvent")
+                inv = item.get("invokeCommandId") or item.get("thenCommand") or item.get("triggersCommand")
+                if trig:
+                    child["triggerEventId"] = str(trig)
+                if inv:
+                    child["invokeCommandId"] = str(inv)
+            else:
+                child["properties"] = []
+            _populate_from_deep_item(child, item)
+            _tag(child, SOURCE_TEMPORARY)
+            tree.setdefault(bucket, []).append(child)
             meta.append({"nodeId": nid, "source": SOURCE_TEMPORARY, "changedFields": [], "badge": "신규"})
 
     return tree, meta
