@@ -1,15 +1,21 @@
 #!/usr/bin/env bash
-# Publish the macOS installer on the public releases repository.
+# Publish the macOS and Windows installers on the public releases repository.
 #
-#   scripts/release/publish-release.sh [--version 0.1.0] [--draft]
+#   scripts/release/publish-release.sh [--version 0.1.0] [--draft] [--dry-run]
+#
+# Both installers are required — a release missing one of them is never created:
+#   desktop/out/dist/Robo-Architect-Lite-mac-arm64.dmg        (cd desktop && npm run dist:mac)
+#   desktop/out/dist/Robo-Architect-Lite-Setup-win-x64.exe    (cd desktop && npm run dist:win)
+# --dry-run checks that both are there, prints the release notes and stops (no gh, no network).
 #
 # 1. checks the built app: its runtime manifest names the images of this version, pinned to pushed
 #    digests, and every image can be pulled anonymously (otherwise first launch fails for everyone)
 # 2. creates the public repository uengine-oss/robo-architect-lite-releases if it does not exist and
 #    puts releases-README.md there as README.md
-# 3. creates release v<version> with Robo-Architect-Lite-mac-arm64.dmg — the fixed name the website links:
+# 3. creates release v<version> with both installers under the fixed names the website links:
 #    https://github.com/uengine-oss/robo-architect-lite-releases/releases/latest/download/Robo-Architect-Lite-mac-arm64.dmg
-# 4. checks that the link answers
+#    https://github.com/uengine-oss/robo-architect-lite-releases/releases/latest/download/Robo-Architect-Lite-Setup-win-x64.exe
+# 4. checks that both links answer
 #
 # Never replaces an asset of an existing release (no --clobber): bump the version instead.
 set -euo pipefail
@@ -17,13 +23,16 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 VERSION=$(node -p "require('$ROOT/desktop/package.json').version")
 DRAFT=""
+DRY_RUN=""
 REPO=uengine-oss/robo-architect-lite-releases
 ASSET=Robo-Architect-Lite-mac-arm64.dmg
+WIN_ASSET=Robo-Architect-Lite-Setup-win-x64.exe
 while [ $# -gt 0 ]; do
   case "$1" in
     --version) VERSION=$2; shift 2 ;;
     --draft) DRAFT=--draft; shift ;;
-    -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
+    --dry-run) DRY_RUN=1; shift ;;
+    -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -31,8 +40,42 @@ say() { printf '\033[36m[publish]\033[0m %s\n' "$*"; }
 die() { printf '\033[31m[publish]\033[0m %s\n' "$*" >&2; exit 1; }
 
 DMG="$ROOT/desktop/out/dist/$ASSET"
+EXE="$ROOT/desktop/out/dist/$WIN_ASSET"
 APP="$ROOT/desktop/out/dist/mac-arm64/Robo Architect Lite.app"
-[ -f "$DMG" ] || die "no $DMG — build it: scripts/build-packaged-runtime.sh --digests … && (cd desktop && npm run dist:mac)"
+# Both installers or nothing: the website links both, and a release without one of them makes
+# /releases/latest/download/<missing> answer 404 for everyone on that platform.
+missing=""
+[ -f "$DMG" ] || missing="$missing
+  $DMG — build it: scripts/build-packaged-runtime.sh --digests … && (cd desktop && npm run dist:mac)"
+[ -f "$EXE" ] || missing="$missing
+  $EXE — build it: see \"Windows x64\" in scripts/release/README.md (cd desktop && npm run dist:win)"
+[ -z "$missing" ] || die "an installer is missing — a release needs both:$missing"
+say "installers: $ASSET ($(du -h "$DMG" | cut -f1)) · $WIN_ASSET ($(du -h "$EXE" | cut -f1))"
+
+write_notes() {
+  cat <<EOF
+Robo Architect Lite $VERSION for macOS (Apple Silicon) and Windows 10/11 (x64).
+
+**Download:**
+- macOS: \`$ASSET\` below — open it and drag the app to Applications.
+- Windows: \`$WIN_ASSET\` below — run the installer. It installs per user; no administrator rights are needed.
+
+**Requirements:** Docker Desktop (running) and Claude Code (installed and signed in). The first launch
+downloads the stack's Docker images, about 1.2 GB (about 5 GB on disk); the home screen shows the progress.
+
+**First launch:** the app is not notarized or code-signed yet. On macOS, when it says it could not verify
+the app, open System Settings › Privacy & Security and click **Open Anyway**. On Windows, when "Windows
+protected your PC" appears, click **More info** › **Run anyway**.
+
+Images: \`ghcr.io/uengine-oss/robo-architect-lite-*:$VERSION\`.
+EOF
+}
+
+if [ -n "$DRY_RUN" ]; then
+  say "dry run — release v$VERSION would carry: $ASSET, $WIN_ASSET (nothing published)"
+  write_notes
+  exit 0
+fi
 [ "$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$APP/Contents/Info.plist")" = "$VERSION" ] \
   || die "the built app is not version $VERSION"
 codesign --verify --deep --strict "$APP" || die "the built app's signature does not verify"
@@ -63,7 +106,7 @@ say "images are public"
 if ! gh repo view "$REPO" >/dev/null 2>&1; then
   say "creating public repository $REPO"
   gh repo create "$REPO" --public \
-    --description "Robo Architect Lite desktop app installers (macOS Apple Silicon)" \
+    --description "Robo Architect Lite desktop app installers (macOS Apple Silicon, Windows x64)" \
     --homepage "https://www.uengine.org/en/contents/roboarchitect.html"
 fi
 readme_sha=$(gh api "repos/$REPO/contents/README.md" --jq .sha 2>/dev/null || true)
@@ -77,27 +120,17 @@ say "README.md updated"
 TAG="v$VERSION"
 gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1 && die "release $TAG already exists — bump the version"
 NOTES=$(mktemp -t robo-release-notes)
-cat > "$NOTES" <<EOF
-Robo Architect Lite $VERSION for macOS (Apple Silicon).
-
-**Download:** \`$ASSET\` below — open it and drag the app to Applications.
-
-**Requirements:** Docker Desktop (running) and Claude Code (installed and signed in). The first launch
-downloads the stack's Docker images, about 1.2 GB (about 5 GB on disk); the home screen shows the progress.
-
-**First launch:** the app is not notarized yet. When macOS says it could not verify the app, open
-System Settings › Privacy & Security and click **Open Anyway**.
-
-Images: \`ghcr.io/uengine-oss/robo-architect-lite-*:$VERSION\`.
-EOF
-gh release create "$TAG" "$DMG" --repo "$REPO" --title "Robo Architect Lite $VERSION" \
+write_notes > "$NOTES"
+gh release create "$TAG" "$DMG" "$EXE" --repo "$REPO" --title "Robo Architect Lite $VERSION" \
   --notes-file "$NOTES" --latest $DRAFT
 rm -f "$NOTES"
 say "released $TAG"
 
 # ── 4. the link the website uses ───────────────────────────────────────────────────────────
 if [ -z "$DRAFT" ]; then
-  URL="https://github.com/$REPO/releases/latest/download/$ASSET"
-  code=$(curl -s -o /dev/null -L -r 0-0 -w '%{http_code}' "$URL")
-  case "$code" in 200|206) say "download link answers: $URL" ;; *) die "download link answered $code: $URL" ;; esac
+  for asset in "$ASSET" "$WIN_ASSET"; do
+    URL="https://github.com/$REPO/releases/latest/download/$asset"
+    code=$(curl -s -o /dev/null -L -r 0-0 -w '%{http_code}' "$URL")
+    case "$code" in 200|206) say "download link answers: $URL" ;; *) die "download link answered $code: $URL" ;; esac
+  done
 fi
