@@ -148,7 +148,7 @@ export function resolveBackendCwd(): string {
   );
 }
 
-function usePackagedRuntime(): boolean {
+export function usePackagedRuntime(): boolean {
   if (process.env.ROBO_RUNTIME_MODE === "docker") return true;
   if (process.env.ROBO_RUNTIME_MODE === "development") return false;
   return app.isPackaged && !process.env.ROBO_BACKEND_DIR;

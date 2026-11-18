@@ -42,8 +42,16 @@ scripts/build-age-fabric-runtime.sh --out /path/to/runtime \
 
 ```bash
 cd desktop && npm run build
-ROBO_RUNTIME_MODE=docker ROBO_DOCKER_RUNTIME_DIR=/path/to/runtime npx electron .
+env -u ELECTRON_RUN_AS_NODE ROBO_RUNTIME_MODE=docker ROBO_DOCKER_RUNTIME_DIR=/path/to/runtime \
+    ROBO_V1_COMPOSE_PROJECT=none npx electron .
 ```
+
+- **`ELECTRON_RUN_AS_NODE` 를 지운다.** VS Code 의 터미널 · 확장은 이 값을 넣어 둔다. 남아 있으면 Electron 이 Node 로 떠서 `protocol.registerSchemesAsPrivileged` 에서 죽는다.
+- **`frontend/dist` 가 있어야 한다.** 출시판과 같게 굽는 법은 `node scripts/build-desktop-frontend.mjs` 다(분석기 원격까지 `dist/analyzer` 에 둔다). 작업 트리에서 그냥 `vite build` 를 하면 둘이 달라진다. 하나는 `../../../open-pencil` 이 있으면 진짜 open-pencil 을 끌어온다는 것이고(출시판은 저장소 안의 대역), 다른 하나는 `ANALYZER_REMOTE_URL` 이 없어 레거시 탭이 localhost:5001 을 찾는다는 것이다.
+- `ROBO_V1_COMPOSE_PROJECT=none` 은 설치된 앱의 기본 스택(`robo-architect-desktop`)이 떠 있어도 평문 이전을 건너뛰게 한다. 설치된 앱의 데이터소스를 건드리지 않는다.
+- 개발 실행의 데이터 폴더는 `~/Library/Application Support/robo-architect-desktop` 이다. 설치된 앱(`Robo Architect Lite`)과 겹치지 않는다.
+
+**화면에 나오는 구성.** 셸은 `app:getRuntimeState` 의 `profile`(매니페스트의 `deployVariant` → `runtime-variant.ts` 의 `profileOf`)을 보고 이름을 바꾼다. `age-fabric` 이면 첫 화면이 「Docker 로 그래프 DB(Apache AGE) · Bolt 게이트웨이 · 패브릭(og-fabric) …」이 된다. 상태 칸은 「Apache AGE 연결됨」과 「구성 Apache AGE + og-fabric」이고, 홈 머리글과 SPA 왼쪽 레일의 그래프 풍선 도움말도 Apache AGE 로 나온다. 기본 구성(`profile` 이 `ontological` 이거나 null)은 예전 문구 그대로다.
 
 `startDockerStack()` 의 `age-fabric` 갈래(`desktop/src/main/docker-stack.ts` → `age-fabric-stack.ts`)가 하는 일:
 

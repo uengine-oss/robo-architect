@@ -342,3 +342,15 @@ test.describe("plaintext migration from v1 (og-fabric-migrate --keychain)", () =
     expect(parseMigrationLines("\n")).toEqual([]);
   });
 });
+
+test.describe("runtime profile (what the screen names)", () => {
+  test("age-fabric names Apache AGE and og-fabric; the default keeps its old words", async () => {
+    const { profileOf } = await import("../../src/main/runtime-variant");
+    expect(profileOf("age-fabric")).toEqual({
+      id: "age-fabric", label: "Apache AGE + og-fabric", graph: "Apache AGE", fabric: "og-fabric", containers: 8,
+    });
+    const base = profileOf("ontological");
+    expect(base.graph).toBe("Ontological");
+    expect(base.containers).toBe(7);
+  });
+});

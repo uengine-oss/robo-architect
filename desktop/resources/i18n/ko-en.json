@@ -2774,7 +2774,10 @@
   "검증 실행 중...": "Running validation...",
   "검증할 인수 조건/구조 변경이 없어 바로 통과 처리합니다.": "No acceptance criteria or structural changes to validate — passing right away.",
   "영역": "Area",
-  "루틴": "Routine"
+  "루틴": "Routine",
+  "Docker 로 그래프 DB(Apache AGE) · Bolt 게이트웨이 · 패브릭(og-fabric) · 분석 서비스를 올리는 중 — 처음 실행은 몇 분 걸립니다": "Starting the graph DB (Apache AGE) · Bolt gateway · fabric (og-fabric) · analysis services with Docker — the first run takes a few minutes",
+  "Robo Architect · Apache AGE(그래프) · og-fabric(데이터 패브릭) · Claude Code — 모두 이 컴퓨터 안에서 돕니다.": "Robo Architect · Apache AGE (graph) · og-fabric (data fabric) · Claude Code — all running on this computer.",
+  "그래프는 Apache AGE(Supabase Postgres), 원천은 og-fabric 이 맡습니다": "The graph is Apache AGE (Supabase Postgres); og-fabric handles the sources"
  },
  "patterns": [
   [
@@ -2796,6 +2799,10 @@
   [
    "→ {0} 의미 프레임 검토됨 ({1} slots)",
    "→ {0} semantic frame reviewed ({1} slots)"
+  ],
+  [
+   "Apache AGE 그래프 {0}",
+   "Apache AGE graph {0}"
   ],
   [
    "→ {0} 상세 조회 실패: {1}",
@@ -5443,6 +5450,11 @@
    ".rule-section",
    "효과",
    "Effects"
+  ],
+  [
+   "#status",
+   "구성",
+   "Configuration"
   ]
  ]
 }

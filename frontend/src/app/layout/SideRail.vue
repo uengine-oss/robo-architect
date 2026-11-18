@@ -3,7 +3,7 @@
 // 상단 탭 막대(TopBar)에 있던 화면 전환을 여기로 옮겼다. 위에 브랜드 박스, 가운데 화면,
 // 아래에 그래프 연결 상태 · 테마 · 개발사 표시.
 // 레거시 탭에서는 앱 화면 대신 레거시 기능의 메뉴(코드 · 데이터 소스 · 코드 그래프 · 데이터 스키마)만 보인다.
-import { computed } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useThemeStore } from '@/app/theme.store'
 import { useSessionStore } from '@/features/desktop-launcher/stores/session-store.js'
 import { LEGACY_FEATURES, legacyFeature, openLegacyFeature } from '@/features/analysis/legacyNav'
@@ -64,6 +64,15 @@ function select(tab) {
 function openEv(name) { window.dispatchEvent(new CustomEvent(name)) }
 
 const graphLabel = computed(() => session.graph || (session.isDesktop ? '—' : 'web'))
+
+// 그래프 DB 이름은 데스크톱이 띄운 구성을 따른다(age-fabric 이면 Apache AGE). 웹 · 기본 구성은 지금처럼 Ontological.
+const graphEngine = ref('Ontological')
+onMounted(async () => {
+  try {
+    const r = await window.desktop?.app?.getRuntimeState?.()
+    if (r?.ok && r.data?.profile?.id === 'age-fabric') graphEngine.value = 'Apache AGE'
+  } catch { /* 웹 화면 · 옛 셸: 기본 이름 그대로 */ }
+})
 </script>
 
 <template>
@@ -99,7 +108,7 @@ const graphLabel = computed(() => session.graph || (session.isDesktop ? '—' : 
     </div>
     <div class="rail__fill"></div>
     <div class="rail__foot">
-      <div class="rail__status" :title="`Ontological 그래프 ${graphLabel}`">
+      <div class="rail__status" :title="`${graphEngine} 그래프 ${graphLabel}`">
         <span class="rail__dot"></span>
         <span class="rail__graph">{{ graphLabel }}</span>
       </div>

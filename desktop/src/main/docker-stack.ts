@@ -47,10 +47,12 @@ import {
   composeProjectName,
   DEFAULT_COMPOSE_PROJECT_NAME,
   deployVariantOf,
+  profileOf,
   requiredImageKeys,
   type BaseImageKey,
   type DeployVariant,
   type ImageKey,
+  type RuntimeProfile,
 } from "./runtime-variant";
 
 const MANIFEST_NAME = "runtime-manifest.json";
@@ -681,6 +683,18 @@ const secretStore: SecretStoreLike = {
 /** og-fabric's client while the age-fabric stack runs (null otherwise): the IPC handlers use it. */
 export function getFabricClient(): FabricClient | null {
   return ageFabric?.client ?? null;
+}
+
+/**
+ * The configuration this start uses, read from the runtime manifest before the stack is up (the
+ * shell shows it while the containers start). null when the manifest cannot be read yet.
+ */
+export function readRuntimeProfile(): RuntimeProfile | null {
+  try {
+    return profileOf(deployVariantOf(readManifest().deployVariant));
+  } catch {
+    return null;
+  }
 }
 
 export function getDeployVariant(): DeployVariant | null {

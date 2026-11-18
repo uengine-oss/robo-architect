@@ -298,20 +298,28 @@ $('rows').addEventListener('click', (e) => {
 })
 
 // ── status ──
+// the runtime configuration (main/runtime-variant.ts profileOf): age-fabric names Apache AGE and
+// og-fabric; the default configuration keeps the words it always had
+const isAge = () => runtime.profile?.id === 'age-fabric'
 function bootText() {
   return ({
-    initializing: '앱을 준비하는 중', 'starting-db': 'Docker 로 그래프 DB(Ontological) · Bolt · 패브릭 · 분석 서비스를 올리는 중 — 처음 실행은 몇 분 걸립니다',
+    initializing: '앱을 준비하는 중',
+    'starting-db': isAge()
+      ? 'Docker 로 그래프 DB(Apache AGE) · Bolt 게이트웨이 · 패브릭(og-fabric) · 분석 서비스를 올리는 중 — 처음 실행은 몇 분 걸립니다'
+      : 'Docker 로 그래프 DB(Ontological) · Bolt · 패브릭 · 분석 서비스를 올리는 중 — 처음 실행은 몇 분 걸립니다',
     'starting-backend': 'Robo Architect 백엔드를 띄우는 중', fatal: '시작하지 못했습니다 — 로그 폴더를 보세요', 'backend-crashed': '백엔드가 멈췄습니다',
   })[runtime.status] || runtime.status
 }
 // first launch of a release: the images come from the registry (main/docker-images.ts)
 const IMAGE_LABEL = { graphDb: 'Ontological DB', graphBolt: 'Bolt', analyzer: 'Analyzer', catalog: 'Catalog', fabric: 'Data fabric', parser: 'Parser', gateway: 'API gateway', wireframe: 'Wireframe renderer' }
+const AGE_IMAGE_LABEL = { ...IMAGE_LABEL, graphDb: 'Apache AGE', graphBolt: 'Bolt gateway', fabric: 'og-fabric', fabricDb: 'og-fabric DB' }
+const imageLabel = (name) => (isAge() ? AGE_IMAGE_LABEL : IMAGE_LABEL)[name] || name
 const bytes = (n) => (n >= 1e9 ? `${(n / 1e9).toFixed(2)} GB` : `${Math.round(n / 1e6)} MB`)
 function bootHtml() {
   const p = boot
   if (p && runtime.status === 'starting-db') {
     if (p.phase === 'loading') return `<span>Docker 이미지 묶음을 불러오는 중</span> · ${p.count}`
-    const label = esc(IMAGE_LABEL[p.name] || p.name)
+    const label = esc(imageLabel(p.name))
     const one = p.totalBytes ? ` · ${bytes(p.currentBytes)} / ${bytes(p.totalBytes)}` : ''
     const pct = p.overallTotal ? Math.min(100, Math.round((p.overallBytes / p.overallTotal) * 100)) : 0
     return `<span>Docker 이미지 내려받는 중</span> ${p.index}/${p.count} — ${label}${one}`
@@ -375,7 +383,8 @@ function renderStatus() {
   const ok = ready()
   const bad = runtime.status === 'fatal' || runtime.status === 'backend-crashed'
   $('status').innerHTML = `
-    <div class="status-row"><span class="dot ${ok ? 'ok' : bad ? 'bad' : 'warn'}"></span><div><b>Ontological</b> ${ok ? '연결됨' : bad ? '멈춤' : '시작 중'}<small>${ok ? `그래프 ${esc(session?.graph || '—')} · Docker 컨테이너 ${info.stackServices ?? 8}개 · 127.0.0.1` : bootHtml()}</small></div></div>`
+    <div class="status-row"><span class="dot ${ok ? 'ok' : bad ? 'bad' : 'warn'}"></span><div><b>${isAge() ? 'Apache AGE' : 'Ontological'}</b> ${ok ? '연결됨' : bad ? '멈춤' : '시작 중'}<small>${ok ? `그래프 ${esc(session?.graph || '—')}${isAge() ? ' · og-fabric' : ''} · Docker 컨테이너 ${info.stackServices ?? 8}개 · 127.0.0.1` : bootHtml()}</small></div></div>`
+    + (isAge() ? '<div class="status-row"><span class="dot ok"></span><div><b>구성</b> Apache AGE + og-fabric<small>그래프는 Apache AGE(Supabase Postgres), 원천은 og-fabric 이 맡습니다</small></div></div>' : '')
     + agentRowHtml()
     + keyRowHtml()
 }
@@ -387,6 +396,7 @@ async function getJSON(u) {
 async function load() {
   if (!D || !S) return
   runtime = unwrap(await D.app.getRuntimeState()) || runtime
+  if (isAge()) $('hello-sub-text') && ($('hello-sub-text').textContent = 'Robo Architect · Apache AGE(그래프) · og-fabric(데이터 패브릭) · Claude Code — 모두 이 컴퓨터 안에서 돕니다.')
   info = (await S.info()) || {}
   session = info.session || (await S.session()) || null
   if (ready()) {

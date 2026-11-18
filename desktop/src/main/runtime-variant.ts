@@ -53,6 +53,29 @@ export function servicesOf(variant: DeployVariant): VariantServices {
     : { db: "graph-db", bolt: "graph-bolt", fabricDb: null };
 }
 
+/**
+ * What the screen says about a configuration (the window shell's start text, status row and image
+ * labels; the SPA's graph tooltip). The default configuration's words are the ones the screen always
+ * showed, so it looks the same as before.
+ */
+export interface RuntimeProfile {
+  id: DeployVariant;
+  /** the configuration as a whole, e.g. "Apache AGE + og-fabric" */
+  label: string;
+  /** the graph database, e.g. "Apache AGE" */
+  graph: string;
+  /** the source-side fabric, e.g. "og-fabric" */
+  fabric: string;
+  /** how many containers the configuration runs */
+  containers: number;
+}
+
+export function profileOf(variant: DeployVariant): RuntimeProfile {
+  return variant === "age-fabric"
+    ? { id: "age-fabric", label: "Apache AGE + og-fabric", graph: "Apache AGE", fabric: "og-fabric", containers: 8 }
+    : { id: "ontological", label: "Ontological DB", graph: "Ontological", fabric: "데이터 패브릭", containers: 7 };
+}
+
 const PROJECT_NAME = /^[a-z0-9][a-z0-9_-]{0,62}$/;
 
 /** ROBO_COMPOSE_PROJECT when it is a valid compose project name, else the configuration's own. */

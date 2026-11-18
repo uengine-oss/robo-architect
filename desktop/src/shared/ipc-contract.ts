@@ -120,6 +120,20 @@ export interface RuntimeState {
   dataSource: DataSource;
   dataDir: string;
   updateState: UpdateState;
+  /**
+   * The runtime configuration the app starts (the runtime manifest's `deployVariant`), known before
+   * the stack is up; null when the app does not run the bundled Docker stack (development mode).
+   */
+  profile: RuntimeProfileInfo | null;
+}
+
+/** main/runtime-variant.ts RuntimeProfile, as it crosses IPC */
+export interface RuntimeProfileInfo {
+  id: "ontological" | "age-fabric";
+  label: string;
+  graph: string;
+  fabric: string;
+  containers: number;
 }
 
 // ---------------------------------------------------------------------------

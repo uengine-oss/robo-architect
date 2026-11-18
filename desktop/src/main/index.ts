@@ -47,7 +47,9 @@ import {
   retryBackend,
   startBackend,
   stopBackend,
+  usePackagedRuntime,
 } from "./backend";
+import { readRuntimeProfile } from "./docker-stack";
 // 032: register stub launcher handlers so the renderer's window.desktop
 // surface answers (with a typed VALIDATION error) for every launcher channel
 // until each gating task lands a real handler.
@@ -128,6 +130,7 @@ function buildRuntimeState(): RuntimeState {
     dataSource: "bundled",
     dataDir: app.getPath("userData"),
     updateState: "idle",
+    profile: usePackagedRuntime() ? readRuntimeProfile() : null,
   };
 }
 
