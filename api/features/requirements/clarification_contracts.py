@@ -256,12 +256,17 @@ class CategoryClarityScore(BaseModel):
     `status` is one of {clear, resolved, deferred, outstanding} when an
     agent scan has reported on this category for the scope; `None` when
     no scan has run yet (the score then comes from the flag/log fallback).
+
+    `scanned=False` + `score=None` = **unknown** (no signal at all). It is not
+    the same as clear (1.0) and must not be drawn as such.
     """
 
     category: AmbiguityCategory
-    score: float = Field(ge=0.0, le=1.0, description="1.0 fully clear · 0.0 every requirement flagged. Weights: clear/resolved=1.0, deferred=0.5, outstanding=0.0")
+    score: Optional[float] = Field(default=None, ge=0.0, le=1.0, description="1.0 fully clear · 0.0 every requirement flagged · null = not scanned. Weights: clear/resolved=1.0, deferred=0.5, outstanding=0.0")
     status: Optional[CoverageStatus] = None
+    scanned: bool = False
     flaggedCount: int = 0
+    # Answered clarification questions in this category (not a story count).
     resolvedCount: int = 0
 
 
@@ -269,9 +274,14 @@ class ClarityScoresResponse(BaseModel):
     scope: ClarificationScope
     totalUserStories: int = 0
     flaggedUserStories: int = 0
+    # Distinct in-scope UserStories with at least one applied clarification.
     resolvedUserStories: int = 0
-    overallScore: float = Field(
-        ge=0.0, le=1.0, default=1.0,
-        description="Average of per-category scores — convenience for the dashboard header.",
+    # Distinct clarification sessions with at least one applied answer.
+    resolvedSessions: int = 0
+    # True when at least one category has a real signal (scan or flag/log).
+    scanned: bool = False
+    overallScore: Optional[float] = Field(
+        ge=0.0, le=1.0, default=None,
+        description="Mean of the per-category scores, unscanned axes counted as 0 — null when nothing is scanned or the scope is empty.",
     )
     scores: list[CategoryClarityScore] = Field(default_factory=list)

@@ -84,15 +84,15 @@ def env(monkeypatch):
 
 
 def _accept(body=None, req=None):
-    return asyncio.run(acc.accept_proposal(PID, body or AcceptProposalRequest(), req or _Req()))
+    return asyncio.run(acc.accept_proposal(PID, req or _Req(), body or AcceptProposalRequest()))
 
 
 def _destroy(reason=None, req=None):
-    return asyncio.run(acc.destroy_proposal(PID, DestroyProposalRequest(reason=reason), req or _Req()))
+    return asyncio.run(acc.destroy_proposal(PID, req or _Req(), DestroyProposalRequest(reason=reason)))
 
 
 def _revoke(body=None, req=None):
-    return asyncio.run(acc.revoke_proposal(PID, body or RevokeProposalRequest(), req or _Req()))
+    return asyncio.run(acc.revoke_proposal(PID, req or _Req(), body or RevokeProposalRequest()))
 
 
 def _retry(req=None):
@@ -360,3 +360,38 @@ def test_retry_merge_requires_po_role(env):
     with pytest.raises(HTTPException) as exc:
         asyncio.run(acc.retry_merge(PID, _Req(role="DEVELOPER")))
     assert exc.value.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# 본문은 선택이다 (lite ⑮ Accept 422) — 프록시에서 본문이 유실돼도 422 가 아니라
+# 기본값(forceAcceptWithFailures=False · revertCode=False)으로 간다. 안전한 방향이다.
+# ---------------------------------------------------------------------------
+
+
+def _http_client(env):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    app = FastAPI()
+    app.include_router(acc.router)
+    return TestClient(app)
+
+
+@pytest.mark.parametrize("action", ["accept", "destroy", "revoke"])
+def test_empty_body_is_not_422(env, action):
+    status = {"accept": "PENDING_ACCEPTANCE", "destroy": "DRAFT", "revoke": "ACCEPTED"}[action]
+    env.set_row(_row(status))
+    client = _http_client(env)
+    prefix = acc.router.prefix
+    res = client.post(f"{prefix}/{PID}/{action}")  # 본문 없음
+    assert res.status_code != 422, res.text
+
+
+def test_empty_body_accept_keeps_failure_gate(env):
+    # 본문이 사라져도 기본값은 force=False → 실패 항목이 있으면 여전히 400 으로 막힌다.
+    env.set_row(_row("PENDING_ACCEPTANCE",
+                     testResults=json.dumps({"passed": 1, "failed": 2})))
+    client = _http_client(env)
+    res = client.post(f"{acc.router.prefix}/{PID}/accept")
+    assert res.status_code == 400, res.text
+    assert env.merges == []
