@@ -142,16 +142,22 @@ def generate_step(
 ) -> WizardProposal:
     """단계 산출물 + 그래프 변경안을 만든다."""
     artifact, changes = "", []
+    engine_used = "claude-ide"
+    reason: str | None = None
     if engine == "claude-ide":
         try:
             artifact, changes = _via_claude(step_key, answers, document)
+            if not artifact:
+                reason = "로컬 claude 가 산출물을 내지 않았습니다"
         except Exception as exc:  # noqa: BLE001
+            reason = f"로컬 claude 실행 실패: {str(exc)[:160]}"
             SmartLogger.log(
                 "WARN", "Claude IDE step generation failed; falling back.",
                 category="requirements.ddd_wizard.generate",
                 params={"error": str(exc), "step": step_key},
             )
     if not artifact:
+        engine_used = "in-process"
         try:
             from langchain_core.messages import HumanMessage
 
@@ -168,6 +174,9 @@ def generate_step(
                 category="requirements.ddd_wizard.generate",
                 params={"error": str(exc), "step": step_key},
             )
+            engine_used = "deterministic"
+            tail = f"in-process LLM 실패: {str(exc)[:160]}"
+            reason = f"{reason} → {tail}" if reason else tail
             artifact, changes = _fallback(step_key, answers, document)
 
     previews = []
@@ -199,4 +208,7 @@ def generate_step(
                 after=after,
             )
         )
-    return WizardProposal(stepKey=step_key, artifactMarkdown=artifact, graphChanges=previews)
+    return WizardProposal(
+        stepKey=step_key, artifactMarkdown=artifact, graphChanges=previews,
+        engineRequested=engine, engineUsed=engine_used, engineFallbackReason=reason,
+    )

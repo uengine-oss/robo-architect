@@ -352,18 +352,18 @@ async function onGenerateStories(scopeType) {
     node.type === 'epic'
       ? store.selectedEpic?.displayName || store.selectedEpic?.name || ''
       : store.selectedFeature?.name || ''
-  // claude-ide 엔진 선택 시 로컬 도구 설치를 먼저 점검 (US5)
+  // claude-ide 엔진 선택 시 로컬 claude 를 먼저 점검 (US5). 하위 스토리 생성은 claude CLI 만
+  // 쓴다(speckit 불필요). 점검 자체가 실패하면 진행한다 — 백엔드가 폴백하고, 실제로 돈 엔진은
+  // 검토 창의 배지(engineUsed)로 드러난다(B-2).
   if (store.generationEngine === 'claude-ide') {
     try {
       const t = await store.checkLocalTooling()
-      if (t.missing && t.missing.length) {
-        window.alert(t.installHint || '로컬 Claude/speckit이 설치되어 있지 않습니다.')
+      if (!t.claudeInstalled) {
+        window.alert(t.installHint || '로컬 Claude(claude CLI)가 설치되어 있지 않습니다.')
         return
       }
-      // 설치되어 있으면 진행. (Claude IDE 헤드리스 생성은 준비 중 —
-      // 현재는 in-process 엔진으로 후보를 생성합니다.)
     } catch {
-      /* 점검 실패 시 in-process로 폴백 */
+      /* 점검 실패 — 진행, 결과 배지가 실제 엔진을 보인다 */
     }
   }
   generating.value = true

@@ -134,15 +134,24 @@ def _generate_via_claude(prompt: str) -> list[GeneratedStory]:
 
 def _generate(
     name: str, description: str, kind: str, parent: str | None, existing: list[dict], engine: str = "in-process"
-) -> list[GeneratedStory]:
+) -> tuple[list[GeneratedStory], str, str | None]:
+    """후보를 만들고 **실제로 돈 엔진**을 같이 돌려준다 — (stories, engineUsed, fallbackReason).
+
+    engineUsed: 'claude-ide' | 'in-process' | 'none'(둘 다 실패해 후보 0건).
+    claude-ide 가 실패해 in-process 로 넘어가면 fallbackReason 에 까닭을 싣는다 —
+    폴백이 조용하면 "무엇이 돌았는지" 알 수 없다.
+    """
     prompt = _build_prompt(kind=kind, name=name, description=description or "", parent=parent, existing=existing)
+    reason: str | None = None
     # claude-ide 엔진: 로컬 claude로 생성, 실패 시 in-process로 폴백.
     if engine == "claude-ide":
         try:
             stories = _generate_via_claude(prompt)
             if stories:
-                return stories
+                return stories, "claude-ide", None
+            reason = "로컬 claude 가 후보를 내지 않았습니다"
         except Exception as exc:  # noqa: BLE001
+            reason = f"로컬 claude 실행 실패: {str(exc)[:160]}"
             SmartLogger.log(
                 "WARN",
                 "Claude IDE generation failed; falling back to in-process.",
@@ -154,7 +163,7 @@ def _generate(
         result: _LLMStories = structured.invoke(
             [build_system_message(_SYSTEM_PROMPT), HumanMessage(content=prompt)]
         )
-        return [s for s in (result.stories or []) if (s.action or "").strip()]
+        return [s for s in (result.stories or []) if (s.action or "").strip()], "in-process", reason
     except Exception as exc:  # noqa: BLE001 — degrade gracefully to manual fallback
         SmartLogger.log(
             "ERROR",
@@ -162,7 +171,8 @@ def _generate(
             category="requirements.user_story.generate_children",
             params={"error": str(exc)},
         )
-        return []
+        tail = f"in-process LLM 실패: {str(exc)[:160]}"
+        return [], "none", (f"{reason} → {tail}" if reason else tail)
 
 
 @router.get("/local-tooling/status", response_model=LocalToolingStatus)
@@ -215,7 +225,7 @@ async def generate_child_stories(
         if not feature:
             raise HTTPException(status_code=404, detail=f"Feature {scope_id} not found")
         bc_id = feature.get("boundedContextId")
-        proposals = _generate(
+        proposals, engine_used, fallback_reason = _generate(
             name=feature.get("name") or "",
             description=feature.get("description") or "",
             kind="Feature",
@@ -224,7 +234,8 @@ async def generate_child_stories(
             engine=engine,
         )
         out = GenerateChildStoriesResponse(
-            scopeType="feature", scopeId=scope_id, boundedContextId=bc_id, featureId=scope_id, proposals=proposals
+            scopeType="feature", scopeId=scope_id, boundedContextId=bc_id, featureId=scope_id, proposals=proposals,
+            engineRequested=engine, engineUsed=engine_used, engineFallbackReason=fallback_reason,
         )
     else:  # epic
         name = _bc_name(scope_id)
@@ -235,7 +246,7 @@ async def generate_child_stories(
             desc_rec = session.run(
                 "MATCH (bc:BoundedContext {id: $id}) RETURN bc.description AS d", id=scope_id
             ).single()
-        proposals = _generate(
+        proposals, engine_used, fallback_reason = _generate(
             name=name,
             description=(desc_rec["d"] if desc_rec else "") or "",
             kind="Epic",
@@ -244,14 +255,16 @@ async def generate_child_stories(
             engine=engine,
         )
         out = GenerateChildStoriesResponse(
-            scopeType="epic", scopeId=scope_id, boundedContextId=scope_id, featureId=None, proposals=proposals
+            scopeType="epic", scopeId=scope_id, boundedContextId=scope_id, featureId=None, proposals=proposals,
+            engineRequested=engine, engineUsed=engine_used, engineFallbackReason=fallback_reason,
         )
 
     SmartLogger.log(
         "INFO",
         f"Generated {len(out.proposals)} child user stories.",
         category="requirements.user_story.generate_children",
-        params={**http_context(request), "scope_type": scope_type, "scope_id": scope_id, "count": len(out.proposals)},
+        params={**http_context(request), "scope_type": scope_type, "scope_id": scope_id, "count": len(out.proposals),
+                "engine_requested": engine, "engine_used": out.engineUsed},
     )
     return out
 

@@ -293,6 +293,11 @@ class GenerateChildStoriesResponse(BaseModel):
     boundedContextId: Optional[str] = None
     featureId: Optional[str] = None
     proposals: list[GeneratedStory] = Field(default_factory=list)
+    # 무엇이 실제로 돌았는지(B-2). claude-ide 를 골라도 실패하면 in-process 로 폴백한다 —
+    # engineUsed 가 engineRequested 와 다르면 화면이 폴백을 드러낸다. 'none' = 둘 다 실패.
+    engineRequested: str = "in-process"
+    engineUsed: Literal["claude-ide", "in-process", "none"] = "in-process"
+    engineFallbackReason: Optional[str] = None
 
 
 class ConfirmChildStoriesRequest(BaseModel):
@@ -622,6 +627,10 @@ class WizardProposal(BaseModel):
     stepKey: str
     artifactMarkdown: str = ""
     graphChanges: list[GraphChangePreview] = Field(default_factory=list)
+    # 무엇이 실제로 돌았는지(B-2). 'deterministic' = LLM 없이 답변으로 만든 폴백 초안.
+    engineRequested: str = "in-process"
+    engineUsed: Literal["claude-ide", "in-process", "deterministic"] = "in-process"
+    engineFallbackReason: Optional[str] = None
 
 
 class WizardConfirmRequest(BaseModel):

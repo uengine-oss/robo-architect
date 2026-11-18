@@ -1,5 +1,6 @@
 <script setup>
 import { ref, computed } from 'vue'
+import EngineUsedBadge from './EngineUsedBadge.vue'
 import { useRequirementsStore } from '@/features/requirements/requirements.store'
 
 /**
@@ -237,6 +238,11 @@ function skipStep() {
       <!-- 제안 -->
       <div v-if="proposal" class="dw-proposal">
         <h5>산출물 (초안)</h5>
+        <EngineUsedBadge
+          :requested="proposal.engineRequested"
+          :used="proposal.engineUsed"
+          :reason="proposal.engineFallbackReason || ''"
+        />
         <pre class="dw-artifact">{{ proposal.artifactMarkdown }}</pre>
         <div v-if="proposal.graphChanges?.length" class="dw-changes">
           <h5>그래프 변경안 (확인 시에만 반영)</h5>

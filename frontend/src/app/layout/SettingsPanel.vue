@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useTerminologyStore } from '@/features/terminology/terminology.store'
 import { useThemeStore } from '@/app/theme.store'
 import { useCanvasStore } from '@/features/canvas/canvas.store'
@@ -24,6 +24,31 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['close'])
+
+// ── 요구사항 생성 엔진 — 로컬 claude 점검 (B-2) ──
+// 'Claude IDE' 는 로컬 claude CLI 가 있어야 돈다. 없으면 고를 수 없게 하고 까닭을 보인다.
+// 점검 자체가 실패하면(백엔드 미기동 등) 막지 않는다 — 실제 실행 결과는 배지가 알려 준다.
+const toolingChecked = ref(false)
+const claudeMissing = ref(false)
+const claudeMissingReason = ref('')
+async function refreshTooling() {
+  if (!claudeIdeAvailable) return
+  try {
+    const t = await requirementsStore.checkLocalTooling()
+    claudeMissing.value = !t.claudeInstalled
+    claudeMissingReason.value = t.claudeInstalled
+      ? ''
+      : '로컬에 claude CLI 가 없습니다 — 설치(https://claude.com/claude-code) 전까지는 in-process LLM 만 쓸 수 있습니다.'
+    if (claudeMissing.value && requirementsStore.generationEngine === 'claude-ide') {
+      requirementsStore.setGenerationEngine('in-process')
+    }
+  } catch {
+    claudeMissing.value = false
+  } finally {
+    toolingChecked.value = true
+  }
+}
+watch(() => props.visible, (v) => { if (v) refreshTooling() }, { immediate: true })
 
 const terminologyStore = useTerminologyStore()
 const themeStore = useThemeStore()
@@ -291,9 +316,13 @@ function reloadAfterClear() {
           <div v-if="claudeIdeAvailable" class="settings-section">
             <div class="settings-section__header">
               <h3 class="settings-section__title">요구사항 생성 엔진</h3>
-              <span class="settings-section__description">하위 User Story 자동 생성에 사용할 엔진을 선택합니다</span>
+              <span class="settings-section__description">
+                적용 범위: <strong>하위 User Story 자동 생성</strong> · <strong>DDD 마법사</strong>.
+                PRD·프로포절·설계 생성에는 쓰이지 않습니다. Claude IDE 가 실패하면 in-process 로
+                넘어가며, 결과 창의 엔진 배지에 실제로 돈 엔진이 표시됩니다.
+              </span>
             </div>
-            <div class="settings-section__control">
+            <div class="settings-section__control settings-section__control--stack">
               <div class="engine-options">
                 <button
                   class="engine-option"
@@ -303,10 +332,15 @@ function reloadAfterClear() {
                 <button
                   class="engine-option"
                   :class="{ 'is-active': requirementsStore.generationEngine === 'claude-ide' }"
+                  :disabled="claudeMissing"
                   @click="requirementsStore.setGenerationEngine('claude-ide')"
-                  title="로컬 Claude Code + speckit 필요 (미설치 시 설치 안내)"
+                  :title="claudeMissing ? claudeMissingReason : '로컬 Claude Code(claude CLI) 로 생성'"
+                  data-testid="engine-option-claude-ide"
                 >Claude IDE</button>
               </div>
+              <p v-if="claudeMissing" class="engine-unavailable" data-testid="engine-claude-missing">
+                {{ claudeMissingReason }}
+              </p>
             </div>
           </div>
 
@@ -643,6 +677,15 @@ function reloadAfterClear() {
   color: var(--color-text-light);
   font-size: 0.76rem;
   cursor: pointer;
+}
+.engine-option:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.engine-unavailable {
+  margin: 6px 0 0;
+  font-size: 0.7rem;
+  color: var(--color-text-light);
 }
 .engine-option.is-active {
   background: var(--color-accent);
