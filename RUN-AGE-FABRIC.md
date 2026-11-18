@@ -17,12 +17,14 @@ Robo Architect Lite 의 셋째 런타임 구성이다. 그래프는 Apache AGE �
 
 | 매니페스트 키 | 기본 참조 | 만드는 법 |
 |---|---|---|
-| graphDb | `uengine/supabase-postgres-age:15.8.1.060-age1.8.0` | `ontological-fabric` 의 `age-supabase/build.sh` (가지 `age/main`) |
+| graphDb | `uengine/supabase-postgres-age:15.8.1.060-age1.8.0` | `ontological-db` 의 `age-supabase/build.sh` (가지 `age/main`, 출시판은 `8422117`) |
 | graphBolt | `uengine/ontological-bolt:age` | 같은 곳 `age-supabase/gateway/build.sh` |
 | fabric | `ogfab-service:stage4` | `/Users/uengine/og-fabric` 가지 `stage4`: `docker build -t ogfab-service:stage4 service/` |
 | fabricDb | `ogfab-db:stage4` | `/Users/uengine/og-fabric` 가지 `stage4`: `image/build-local.sh --work <dir>`. 서비스와 같은 커밋에서 굽는다(옛 `ogfab-db:dev` 는 `cf57257` · `c9040ae` 이전 판이라 표본이 42501) |
 | catalog | `uengine/robo-data-catalog:age-fabric` | `git -C robo-analyzer/robo-data-catalog archive feat/age-fabric \| docker build -t uengine/robo-data-catalog:age-fabric -` — 하위 모듈의 **가지**에서 굽는다. 상위 저장소의 catalog 핀은 `1f1aaa6` 그대로다(아래 「catalog 핀」) |
-| analyzer · parser · gateway | `uengine/robo-analyzer` · `robo-antlr-parser` · `robo-api-gateway` `:lite-mac` | 기본 구성과 같다 |
+| analyzer · parser · gateway · wireframe | `ghcr.io/uengine-oss/robo-architect-lite-<component>:0.1.4` | 0.1.4 출시판의 이미지 그대로다. 먼저 `docker pull` 한다 |
+
+이 목록은 한 곳에 있다: `scripts/age-fabric-images.txt`(개발 런타임 · 출시 런타임 · 이미지 올리기가 같이 읽는다).
 
 > ⚠ og-fabric 의 이미지는 og-fabric 의 지금 소스로 다시 구워야 한다. 4단계 시험 때 남아 있던 `ogfab-db:dev`(11-18 11:08)는 `cf57257`(읽기 전용 원천 계정의 기본 키) · `c9040ae`(`allow` 이름 찾기) 이전 판이었다. 그 판으로는 `GET …/tables/{t}/sample` 이 42501 이 된다. 시험에서는 확장만 다시 빌드해 `ogfab-db:stage4` 로 얹었다(아래 5절).
 
@@ -35,7 +37,7 @@ scripts/build-age-fabric-runtime.sh --out /path/to/runtime \
 ```
 
 - `compose.age-fabric.yml`, `config/*.env`(analyzer · catalog · parser · gateway 는 출시판과 같다. fabric 은 og-fabric 설정), `architect/app/.env`, `runtime-manifest.json` 을 쓴다.
-- 매니페스트에는 로컬 이미지의 참조와 ID 가 들어가고 `imagePull: false` 다. 출시용 빌드(레지스트리 · amd64)는 아직 없다(7절).
+- 매니페스트(schemaVersion 4)에는 로컬 이미지의 참조와 ID 가 들어가고 `imagePull: false` 다. 출시판은 8절.
 - 비밀은 폴더에 들어가지 않는다. 앱이 기동할 때 compose 에 넘긴다.
 
 ## 3. 앱으로 띄우기 (개발)
@@ -117,6 +119,14 @@ rm -rf $W
 - 단위 시험: 데스크톱 13개(기존 18개와 함께 31개), catalog 13개(전체 201개), og-fabric 7개(전체 13개).
 - 자세한 것은 `uengine-platform/reports/age-on-supabase/FABRIC-PROGRESS.md` 11절에 있다.
 
+### 0.1.4 위에서 다시 (2026-11-18 저녁)
+
+- 이 가지(`rel/age-on-0.1.4`)는 0.1.4(`release/lite-0.1.4`) 위에 AGE 커밋을 다시 얹은 것이다. 0.1.4 의 와이어프레임 렌더러가 이 구성에도 들어갔다(9 서비스).
+- E2E 44개가 모두 통과했다. 첫 기동 34초, 두 번째 기동 32초다. 새로 더한 검사는 두 번째 기동이 저장된 포트를 그대로 쓰는지다. 0.1.4 는 포트 키 집합을 정확히 맞춰 보는데, og-fabric 포트를 선택 키로 받게 했다.
+- 기본 구성의 compose · 매니페스트 틀은 `release/lite-0.1.4` 와 바이트가 같다(8 서비스).
+- 단위 시험 39개가 통과했다.
+- 시험할 때 Docker 의 네트워크 주소 풀이 바닥났다(`all predefined address pools have been fully subnetted`). 이 구성은 네트워크를 넷 쓴다. 다른 묶음이 많은 PC 에서는 비어 있는 네트워크를 정리해야 뜬다.
+
 ## 7. 남은 것
 
 - **화면(robo-data-frontend).** 그 화면의 데이터소스 호출은 API 게이트웨이의 `/data-fabric` 경로로 간다. 이 경로가 og-fabric 의 서비스 토큰을 붙이지 않아서, 지금은 401 이다. 고치려면 robo-api-gateway 에서 그 경로에 `Authorization` 을 더하거나, og-fabric 의 `/k/<token>/` 앞머리로 다시 쓰게 해야 한다.
@@ -125,8 +135,18 @@ rm -rf $W
   - 질의 창의 언어 선택(SQL → og-fabric `/api/query`, Cypher → 그래프 게이트웨이)은 이 화면에 아직 질의 창이 없어 하지 않았다.
 - **분석기.** 꼬리표 `age-bolt` 판별과 라벨 사슬 쓰기는 AGE 시험 쪽 일이다(`ANALYZER-ON-AGE.md`). 이 구성에서 분석기는 뜨고 healthy 다. 분석 흐름은 돌리지 않았다.
 - **catalog `/tables/resolve-context`.** robo-data-fabric 의 `object-resolution-context` 를 부르는데, og-fabric 에는 그 경로가 없다(404).
-- **출시 빌드.** 레지스트리 이름, `push-images`, amd64 이미지(og-fabric 둘 · AGE 둘), Windows 판이 없다.
+- **Windows 판.** amd64 이미지(og-fabric 둘 · AGE 둘)와 Windows 설치본이 없다. 출시판은 macOS(Apple Silicon)뿐이다(8절).
 - **패키지 앱의 키체인.** safeStorage 대역으로만 돌렸다. 패키지된 macOS 앱이 판마다 키체인 접근을 묻는 것은 확인하지 않았다.
+
+## 8. 출시판 「Robo Architect Lite AGE」 (미리 보기)
+
+- 판 `0.1.4-age.1`, 태그 `v0.1.4-age.1`, `uengine-oss/robo-architect-lite-releases` 의 **pre-release** 다. 웹사이트가 거는 `releases/latest` 는 계속 보통 판을 가리킨다.
+- 앱 이름이 따로다: `Robo Architect Lite AGE`(`org.uengine.robo-architect-lite-age`). 보통 판 옆에 깔리고, 데이터 폴더(`~/Library/Application Support/Robo Architect Lite AGE`) · 키체인 항목 · Figma 플러그인 폴더가 모두 따로다(`desktop/electron-builder.age.js`). DMG 이름은 `Robo-Architect-Lite-AGE-mac-arm64.dmg` 다.
+- 이미지는 `ghcr.io/uengine-oss/robo-architect-lite-<component>:0.1.4-age.1` 아홉 개다. 뜻이 같은 것은 보통 판의 패키지를 같이 쓴다(graph-db 는 AGE, fabric 은 og-fabric). `fabric-db` 만 새 패키지다. analyzer · parser · gateway · wireframe 은 0.1.4 와 digest 가 같다.
+- 만드는 순서는 `scripts/release/README.md` 의 「macOS Apache AGE edition」이다. 모든 스크립트가 `--variant age-fabric` 을 받는다. 그 값이 없으면 보통 판을 예전과 똑같이 만든다.
+- 공개 전에: 이미지에 비밀번호 · 토큰이 없는지, 그리고 AGE 쪽에서 아직 알리지 않은 문제를 설명하는 글이 없는지 확인했다. AGE DB 이미지는 그 글을 걷어 낸 `age/main` `8422117` 에서 다시 구웠다.
+- 설치본 확인(2026-11-18): 앱 사본을 빈 데이터 폴더 · 자기 compose 프로젝트로 띄웠다(README 의 「Checking a build」). 이미지 9개는 ID 가 맞아 받지 않고 다시 썼다. 앱을 연 뒤 36초에 `backend.status ready` 가 되었고, 컨테이너 9개가 모두 healthy 였다. 홈의 상태 칸은 「Apache AGE 연결됨 · og-fabric · Docker 컨테이너 9개」와 「구성 Apache AGE + og-fabric」이다. 끝나고 `down -v` 했다.
+- 확인하지 않은 것: 다른 PC 에서 처음부터 받아 띄우는 것(익명 pull 은 매니페스트 응답으로만 확인), 패키지 앱이 데이터소스 암호를 키체인에 넣을 때 묻는 창.
 
 ## catalog 핀
 

@@ -55,6 +55,43 @@ install places to find `docker` and `claude` (`desktop/src/main/host-path.ts`).
 Pull path tests: `cd desktop && npx playwright test tests/unit/docker-images.spec.ts` (no Docker) and
 `node scripts/test-image-pull.mjs` (a throwaway local registry and image).
 
+# macOS Apache AGE edition (pre-release, Apple Silicon)
+
+"Robo Architect Lite AGE" — the same app on the `age-fabric` configuration (Apache AGE behind the Bolt
+gateway, og-fabric for the sources; `RUN-AGE-FABRIC.md`). It has its own app identity
+(`org.uengine.robo-architect-lite-age`, its own data folder and keychain item), so it installs next to
+the regular app, and it is published as a **pre-release** with its own DMG name — the website's
+`releases/latest` link keeps pointing at the regular app. Version: `<regular version>-age.<n>`
+(`desktop/package.json` on the edition's branch).
+
+```bash
+# 0. the images (scripts/age-fabric-images.txt says how each is built). analyzer · parser · gateway ·
+#    wireframe are the regular release's: docker pull ghcr.io/uengine-oss/robo-architect-lite-<c>:<regular>
+#    Before pushing, check that no image carries a secret or text that must stay private.
+#    The front end the release way, with the open-pencil SUBMODULE: in a git worktree next to a sibling
+#    ~/open-pencil checkout, vite takes the sibling (vite.config.js OP_REAL = ../../../open-pencil) —
+#    build from a copy where only the submodule is reachable, then add the analyzer remote as dist/analyzer.
+
+# 1. push the nine images (the regular release's four keep their digests, they only get the new tag)
+scripts/release/push-images.sh --variant age-fabric        # → desktop/out/release/image-digests-age-fabric.json
+#    ⚠ robo-architect-lite-fabric-db is the edition's own package: private on its first push. Switch it to
+#    Public by hand (an org owner or the account that pushed it), then:
+scripts/release/check-images-public.sh --version <version> --variant age-fabric
+
+# 2. the runtime folder, pinned → desktop/out/age/runtime (resources/runtime stays the regular one)
+scripts/build-packaged-runtime.sh --variant age-fabric --digests desktop/out/release/image-digests-age-fabric.json
+
+# 3. the DMG → desktop/out/dist/Robo-Architect-Lite-AGE-mac-arm64.dmg
+(cd desktop && env -u ELECTRON_RUN_AS_NODE npm run dist:mac:age)
+
+# 4. the pre-release (never --latest, the README of the releases repository is left alone)
+scripts/release/publish-release.sh --variant age-fabric --notes-file <notes.md> --draft
+```
+
+Check the built app like the regular one (below), with its own executable:
+`"<copy>/Robo Architect Lite AGE.app/Contents/MacOS/Robo Architect Lite AGE"`. Its stack is the compose
+project `robo-architect-desktop-age` unless `ROBO_COMPOSE_PROJECT` says otherwise.
+
 # Windows x64 (NSIS installer, cross-built on the Mac)
 
 The same app with a Windows runtime: python-build-standalone CPython for `x86_64-pc-windows-msvc` of
