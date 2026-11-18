@@ -52,6 +52,7 @@ import {
 // surface answers (with a typed VALIDATION error) for every launcher channel
 // until each gating task lands a real handler.
 import { registerLauncherIpcStubs } from "./launcher/ipc-handlers";
+import { registerFabricIpc } from "./fabric-ipc";
 // Tabbed windows (Ontological Studio family): shell = tab strip + home, tabs = SPA views.
 import { TabWindow, firstWindow, menuItems, reopenLastProject, setPreload, wireShellIpc } from "./tabs";
 // English mode (runtime translator): language choice, the dictionary, <head> injection.
@@ -329,6 +330,9 @@ function registerIpcHandlers(): void {
   registerHandler("fs:mkdir", mkdir);
   registerHandler("fs:writeFile", writeFile);
   registerHandler("fs:stageProject", stageProject);
+
+  // age-fabric: datasource passwords into the OS keychain and on to og-fabric (FABRIC-SPLIT.md Q13).
+  registerFabricIpc();
 
   // Bridge backend status changes to the renderer.
   onBackendStatusChange((status, detail, progress) => {

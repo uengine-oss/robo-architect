@@ -75,6 +75,15 @@ import type {
   FsWriteInput,
 } from "../shared/fs-browser-contract";
 
+// age-fabric: datasource passwords go to the main process (keychain), never to the fabric service.
+import type {
+  FabricDesktopBridge,
+  FabricStatus,
+  ForgetDatasourceSecretInput,
+  KeepDatasourceSecretInput,
+  KeepDatasourceSecretResult,
+} from "../shared/fabric-contract";
+
 function invoke<T>(channel: string, args?: unknown): Promise<IpcResult<T>> {
   return ipcRenderer.invoke(channel, args) as Promise<IpcResult<T>>;
 }
@@ -152,7 +161,17 @@ const fsBridge: FsBrowserDesktopBridge = {
   },
 };
 
-const bridge: Omit<DesktopBridge, "connections" | "projectRoot" | "identity" | "launcher" | "projects" | "fs"> = {
+const fabricBridge: FabricDesktopBridge = {
+  fabric: {
+    status: () => invoke<FabricStatus>("fabric:status"),
+    keepDatasourceSecret: (input: KeepDatasourceSecretInput) =>
+      invoke<KeepDatasourceSecretResult>("fabric:keepDatasourceSecret", input),
+    forgetDatasourceSecret: (input: ForgetDatasourceSecretInput) =>
+      invoke<{ ok: true }>("fabric:forgetDatasourceSecret", input),
+  },
+};
+
+const bridge: Omit<DesktopBridge, "connections" | "projectRoot" | "identity" | "launcher" | "projects" | "fs" | "fabric"> = {
   app: {
     getRuntimeState: () => invoke<RuntimeState>("app:getRuntimeState"),
     openExternal: (params: OpenExternalParams) =>
@@ -193,7 +212,7 @@ const bridge: Omit<DesktopBridge, "connections" | "projectRoot" | "identity" | "
 
 // Merge 023 surface + 032 launcher surface into the single `window.desktop`
 // object. Spread is safe because the two halves share no top-level keys.
-contextBridge.exposeInMainWorld("desktop", { ...bridge, ...launcherBridge, ...fsBridge });
+contextBridge.exposeInMainWorld("desktop", { ...bridge, ...launcherBridge, ...fsBridge, ...fabricBridge });
 
 // Tabbed-window shell (main/tabs.ts) — the same surface as Ontological Studio's `liteShell`.
 // Main checks who is asking: tab-strip calls are honoured only from a window's own shell page;

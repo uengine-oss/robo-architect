@@ -1,0 +1,328 @@
+# Robo Architect Lite — the third runtime configuration, `age-fabric`.
+#
+#   graph   Apache AGE 1.8.0 in Supabase Postgres 15 (age-db), behind our Bolt gateway (age-bolt,
+#           server agent "age-bolt"). The app still speaks Bolt; nothing in it changes.
+#   source  the fabric service og-fabric (fabric) and its own PG16 (fabric-db: og_fabric + FDWs).
+#           MCP / the catalog read sources with SQL over HTTP; there is no Cypher over the fabric.
+#
+# The default configuration is compose.yml (Ontological single) and stays as it is: this file is
+# chosen only by a runtime manifest with "deployVariant": "age-fabric" (composeFile).
+#
+# Networks
+#   graph    internal: age-db and age-bolt only (age-db publishes nothing)
+#   fabric   internal: fabric-db and fabric only (fabric-db publishes nothing)
+#   sources  fabric-db's way out to the source databases (FDW connections); nothing else is on it
+#   default  the application services
+# Host ports are bound to 127.0.0.1 only: Bolt (age-bolt), the analyzer, the API gateway, and the
+# fabric service (the desktop shell's secrets channel, /internal/secrets, with its per-boot token).
+#
+# Secrets come from the launching process (desktop/src/main/docker-stack.ts → age-fabric-stack.ts),
+# never from a file here: ROBO_NEO4J_PASSWORD (role robo, the Bolt login), ROBO_AGE_ADMIN_PASSWORD
+# (supabase_admin of age-db), ROBO_FABRIC_DB_PASSWORD / ROBO_FABRIC_QUERY_PASSWORD (fabric-db roles),
+# ROBO_FABRIC_SERVICE_TOKEN (callers of og-fabric) and ROBO_FABRIC_INTERNAL_TOKEN (new every boot).
+# Source passwords never pass through compose: the shell keeps them in the OS keychain and hands
+# them to og-fabric's channel; og-fabric writes the connectors' files on a tmpfs both fabric
+# containers mount (fabric_credentials).
+services:
+  # ── graph ──────────────────────────────────────────────────────────────────────
+  age-db:
+    image: ${ROBO_IMAGE_GRAPH_DB}
+    restart: unless-stopped
+    labels:
+      org.uengine.robo.release: ${ROBO_RELEASE_ID}
+      org.uengine.robo.component: age-db
+    environment:
+      # supabase_admin / postgres. The image's first start makes AGE, template1's age and the graph
+      # database `graph` (LC_COLLATE C, as Neo4j sorts). The login role robo and the graphs robo /
+      # analyzer_run are made by the shell after it is healthy (the gateway does not make graphs).
+      POSTGRES_PASSWORD: ${ROBO_AGE_ADMIN_PASSWORD}
+      POSTGRES_HOST: /var/run/postgresql
+    command:
+      - postgres
+      - -D
+      - /etc/postgresql
+      # a runaway query (an unbounded variable-length pattern) stops at 2 GB of temporary files
+      - -c
+      - temp_file_limit=2GB
+      - -c
+      - statement_timeout=${ROBO_PG_STATEMENT_TIMEOUT:-0}
+    volumes:
+      - age_data:/var/lib/postgresql/data
+    networks: [graph]
+    mem_limit: ${ROBO_AGE_DB_MEMORY:-1536m}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -h 127.0.0.1 -q"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 30s
+
+  age-bolt:
+    image: ${ROBO_IMAGE_GRAPH_BOLT}
+    restart: unless-stopped
+    init: true   # PID 1 that passes SIGTERM on (otherwise stopping takes the kill timeout)
+    labels:
+      org.uengine.robo.release: ${ROBO_RELEASE_ID}
+      org.uengine.robo.component: age-bolt
+    environment:
+      OG_BOLT_BACKEND: age
+      OG_BOLT_LISTEN: 0.0.0.0:7687
+      OG_BOLT_PGHOST: age-db
+      OG_BOLT_PGPORT: "5432"
+      OG_BOLT_PGDATABASE: graph
+      # a session without a database (or "neo4j") goes to the design graph
+      OG_BOLT_GRAPH: ${ROBO_GRAPH_DESIGN}
+      # no PGPASSWORD: a Bolt client logs in as robo and the gateway passes that login on
+    ports:
+      # Bolt carries the password in plain text: loopback only
+      - "127.0.0.1:${ROBO_NEO4J_PORT}:7687"
+    networks: [graph, default]
+    mem_limit: 256m
+    depends_on:
+      age-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 7687 || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 5s
+
+  # ── source: og-fabric ──────────────────────────────────────────────────────────
+  fabric-db:
+    image: ${ROBO_IMAGE_FABRIC_DB}
+    restart: unless-stopped
+    labels:
+      org.uengine.robo.release: ${ROBO_RELEASE_ID}
+      org.uengine.robo.component: fabric-db
+    environment:
+      POSTGRES_USER: og
+      POSTGRES_PASSWORD: ${ROBO_FABRIC_DB_PASSWORD}
+      POSTGRES_DB: fabric
+      OG_FABRIC_QUERY_ROLE: og_fabric_service
+      OG_FABRIC_QUERY_PASSWORD: ${ROBO_FABRIC_QUERY_PASSWORD}
+    command:
+      - postgres
+      - -c
+      - og_fabric.credentials_dir=/run/og-fabric/credentials
+      - -c
+      - og_fabric.inline_passwords=refuse
+      - -c
+      - temp_file_limit=2GB
+      - -c
+      - statement_timeout=${ROBO_PG_STATEMENT_TIMEOUT:-0}
+    volumes:
+      # holds foreign table definitions, the registry and the audit: no user data
+      - fabric_data:/var/lib/postgresql/data
+      - fabric_credentials:/run/og-fabric/credentials
+    networks: [fabric, sources]
+    mem_limit: ${ROBO_FABRIC_DB_MEMORY:-512m}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U og -d fabric -q"]
+      interval: 3s
+      timeout: 5s
+      retries: 60
+      start_period: 10s
+
+  fabric:
+    image: ${ROBO_IMAGE_FABRIC}
+    env_file:
+      - ./config/fabric.env
+    restart: unless-stopped
+    labels:
+      org.uengine.robo.release: ${ROBO_RELEASE_ID}
+      org.uengine.robo.component: fabric
+    # the postgres uid of fabric-db: the connector files it writes (0600) are readable there and nowhere else
+    user: "999:999"
+    environment:
+      # the port robo-data-fabric had, so DATA_FABRIC_URL=http://fabric:8404 stays
+      OG_FABRIC_PORT: "8404"
+      OG_FABRIC_ADMIN_DSN: postgresql://og:${ROBO_FABRIC_DB_PASSWORD}@fabric-db:5432/fabric
+      OG_FABRIC_QUERY_DSN: postgresql://og_fabric_service:${ROBO_FABRIC_QUERY_PASSWORD}@fabric-db:5432/fabric
+      OG_FABRIC_SERVICE_TOKEN: ${ROBO_FABRIC_SERVICE_TOKEN}
+      OG_FABRIC_INTERNAL_TOKEN: ${ROBO_FABRIC_INTERNAL_TOKEN}
+      OG_FABRIC_CREDENTIALS_DIR: /run/og-fabric/credentials
+      # no graph connection (NEO4J_*): the fabric never writes to the graph
+    ports:
+      # the desktop shell's secrets channel (and the API, both need their token): loopback only
+      - "127.0.0.1:${ROBO_FABRIC_PORT}:8404"
+    volumes:
+      - fabric_credentials:/run/og-fabric/credentials
+    networks: [fabric, default]
+    mem_limit: 256m
+    depends_on:
+      fabric-db:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8404/healthz', timeout=3)",
+        ]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+      start_period: 5s
+
+  # ── application ────────────────────────────────────────────────────────────────
+  catalog:
+    image: ${ROBO_IMAGE_CATALOG}
+    env_file:
+      - ./config/catalog.env
+    restart: unless-stopped
+    labels:
+      org.uengine.robo.release: ${ROBO_RELEASE_ID}
+      org.uengine.robo.component: catalog
+    environment:
+      NEO4J_URI: bolt://age-bolt:7687
+      NEO4J_USER: ${ROBO_GRAPH_USER}
+      NEO4J_PASSWORD: ${ROBO_NEO4J_PASSWORD}
+      # the analyzer's TABLE · COLUMN · FK live in the analysis graph
+      NEO4J_DATABASE: ${ROBO_GRAPH_ANALYSIS}
+      DEPLOY_VARIANT: age-fabric
+      DATA_FABRIC_URL: http://fabric:8404
+      DATA_FABRIC_TOKEN: ${ROBO_FABRIC_SERVICE_TOKEN}
+      ONTOLOGICAL_FABRIC_URI: ""
+      CATALOG_ALLOW_NEO4J_HEADER_OVERRIDE: "false"
+    mem_limit: 768m
+    depends_on:
+      age-bolt:
+        condition: service_healthy
+      fabric:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5503/robo/check-data/', timeout=3)",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 10s
+
+  analyzer:
+    image: ${ROBO_IMAGE_ANALYZER}
+    env_file:
+      - ./config/analyzer.env
+    restart: unless-stopped
+    labels:
+      org.uengine.robo.release: ${ROBO_RELEASE_ID}
+      org.uengine.robo.component: analyzer
+    ports:
+      - "127.0.0.1:${ROBO_ANALYZER_PORT}:5502"
+    environment:
+      ROBO_NEO4J_URI: bolt://age-bolt:7687
+      ROBO_NEO4J_USER: ${ROBO_GRAPH_USER}
+      ROBO_NEO4J_PASSWORD: ${ROBO_NEO4J_PASSWORD}
+      # ⚠ the analysis empties and rewrites its graph: never the design graph
+      ROBO_NEO4J_DATABASE: ${ROBO_GRAPH_ANALYSIS}
+      NEO4J_URI: bolt://age-bolt:7687
+      NEO4J_USER: ${ROBO_GRAPH_USER}
+      NEO4J_PASSWORD: ${ROBO_NEO4J_PASSWORD}
+      NEO4J_DATABASE: ${ROBO_GRAPH_DESIGN}
+      ROBO_CATALOG_BASE_URL: http://catalog:5503/robo
+      ROBO_DATA_DIR: /data
+      ROBO_ARCHITECT_API_PORT: ${ROBO_ARCHITECT_API_PORT}
+    volumes:
+      - shared_data:/data
+    mem_limit: ${ROBO_ANALYZER_MEMORY:-2g}
+    depends_on:
+      age-bolt:
+        condition: service_healthy
+      catalog:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5502/', timeout=3)",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 15s
+
+  parser:
+    image: ${ROBO_IMAGE_PARSER}
+    env_file:
+      - ./config/parser.env
+    restart: unless-stopped
+    labels:
+      org.uengine.robo.release: ${ROBO_RELEASE_ID}
+      org.uengine.robo.component: parser
+    environment:
+      SERVER_PORT: "8081"
+      ROBO_DATA_DIR: /data
+    volumes:
+      - shared_data:/data
+    mem_limit: 1g
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8081/"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  gateway:
+    image: ${ROBO_IMAGE_GATEWAY}
+    env_file:
+      - ./config/gateway.env
+    restart: unless-stopped
+    labels:
+      org.uengine.robo.release: ${ROBO_RELEASE_ID}
+      org.uengine.robo.component: gateway
+    ports:
+      - "127.0.0.1:${ROBO_GATEWAY_PORT}:9000"
+    environment:
+      SERVER_PORT: "9000"
+      ROBO_ANTLR_URL: http://parser:8081
+      ROBO_ANALYZER_URL: http://analyzer:5502
+      ROBO_CATALOG_URL: http://catalog:5503
+      # ⚠ og-fabric wants a service token and the gateway's data-fabric route does not send one yet:
+      #   the screen's datasource calls through /data-fabric answer 401 in this configuration
+      #   (RUN-AGE-FABRIC.md, remaining).
+      ROBO_DATA_FABRIC_URL: http://fabric:8404
+      ROBO_ARCHITECT_URL: http://host.docker.internal:${ROBO_ARCHITECT_API_PORT}
+    mem_limit: 1g
+    depends_on:
+      analyzer:
+        condition: service_healthy
+      catalog:
+        condition: service_healthy
+      fabric:
+        condition: service_healthy
+      parser:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:9000/actuator/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 15s
+
+networks:
+  graph:
+    internal: true
+  fabric:
+    internal: true
+  sources: {}
+
+volumes:
+  # not graph_data: the Ontological volume of compose.yml is another product's data
+  age_data:
+  fabric_data:
+  # the connectors' credential files: a tmpfs (a secret never reaches a disk), owned by postgres
+  # (uid 999 in fabric-db, the uid fabric runs as), private to it
+  fabric_credentials:
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: "uid=999,gid=999,mode=0700"
+  shared_data:

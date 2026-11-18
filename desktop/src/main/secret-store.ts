@@ -26,6 +26,11 @@
  * and never touches the keychain; development keeps `safeStorage`.
  * `ROBO_SECRET_STORE=file|keychain` overrides. An existing `<id>.bin` is
  * still read through `safeStorage`, so nothing stored before is lost.
+ *
+ * Source database passwords (the age-fabric configuration's datasources, Q13 of
+ * FABRIC-SPLIT.md) are not this install's own secrets: `setSecret(id, value,
+ * { keychain: true })` keeps them in `safeStorage` whatever the file mode says —
+ * a new version may ask once for the keychain, which is accepted for them.
  */
 
 import { app, safeStorage } from "electron";
@@ -74,8 +79,20 @@ function ensureUsable(): void {
   }
 }
 
-export async function setSecret(id: string, value: string): Promise<void> {
+export interface SetSecretOptions {
+  /** the OS keychain (safeStorage) even where the store keeps owner-only files */
+  keychain?: boolean;
+}
+
+export async function setSecret(id: string, value: string, options: SetSecretOptions = {}): Promise<void> {
   fs.mkdirSync(secretsDir(), { recursive: true, mode: 0o700 });
+  if (options.keychain) {
+    ensureUsable();
+    const cipher = safeStorage.encryptString(value);
+    await fs.promises.writeFile(secretFile(id), cipher, { mode: 0o600 });
+    await unlinkIfPresent(plainFile(id)); // a plain file of the same id must not win on read
+    return;
+  }
   if (fileMode()) {
     const file = plainFile(id);
     const temporary = `${file}.tmp`;

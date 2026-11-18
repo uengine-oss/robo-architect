@@ -11,6 +11,11 @@
  *
  * It intentionally does not own the Architect API child process; backend.ts
  * consumes the returned ports and starts that process with bundled Python.
+ *
+ * Two configurations (runtime-variant.ts), chosen by the manifest's `deployVariant`:
+ * the default (compose.yml, Ontological single — this file's original path, unchanged)
+ * and `age-fabric` (compose.age-fabric.yml: AGE + og-fabric), whose steps between
+ * bringing containers up are age-fabric-stack.ts.
  */
 
 import { execFile } from "node:child_process";
@@ -18,29 +23,52 @@ import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
+import {
+  deliverKeychainSecrets,
+  ensureAgeFabricSecrets,
+  FabricClient,
+  migrateV1Plaintext,
+  newToken,
+  prepareAgeDb,
+  prepareFabricDb,
+  type AgeFabricSecrets,
+  type ExecInService,
+  type SecretStoreLike,
+} from "./age-fabric-stack";
 import { getDataDir } from "./data-dir";
 import { ensureImages as fetchImages, type ImageEntry, type ProgressListener } from "./docker-images";
 import { GRAPH_ANALYSIS, GRAPH_DESIGN, GRAPH_USER } from "./graphs";
 import { ensureBundledConnection } from "./launcher/connections";
 import { log } from "./logging";
 import { pickFreePort } from "./ports";
-import { getSecret, setSecret } from "./secret-store";
+import { deleteSecret, getSecret, setSecret } from "./secret-store";
 import { loadSettings } from "./settings";
+import {
+  composeProjectName,
+  DEFAULT_COMPOSE_PROJECT_NAME,
+  deployVariantOf,
+  requiredImageKeys,
+  type BaseImageKey,
+  type DeployVariant,
+  type ImageKey,
+} from "./runtime-variant";
 
 const MANIFEST_NAME = "runtime-manifest.json";
 const STATE_SCHEMA_VERSION = 2;
 const MANIFEST_SCHEMA_VERSION = 4;
-const DEFAULT_COMPOSE_PROJECT_NAME = "robo-architect-desktop";
 // ROBO_COMPOSE_PROJECT: a second stack next to the usual one (packaged-app test with a
 // fresh data folder — the same project name would recreate the running containers).
-const COMPOSE_PROJECT_NAME = /^[a-z0-9][a-z0-9_-]{0,62}$/.test(process.env.ROBO_COMPOSE_PROJECT ?? "")
-  ? (process.env.ROBO_COMPOSE_PROJECT as string)
-  : DEFAULT_COMPOSE_PROJECT_NAME;
+// Without it: robo-architect-desktop, or robo-architect-desktop-age for age-fabric.
+function projectNameOf(manifest: RuntimeManifest): string {
+  return composeProjectName(deployVariantOf(manifest.deployVariant), process.env.ROBO_COMPOSE_PROJECT);
+}
 const NEO4J_PASSWORD_SECRET_ID = "runtime.docker.neo4j.password";
 const DOCKER_COMMAND_TIMEOUT_MS = 10 * 60_000;
 
 export interface RuntimeManifest {
   schemaVersion: number;
+  /** "age-fabric" for compose.age-fabric.yml; absent (or "ontological") is the default configuration */
+  deployVariant?: string;
   releaseId: string;
   composeFile: string;
   /** a bundled `docker save` archive (offline install) */
@@ -58,12 +86,14 @@ export interface RuntimeManifest {
     gateway: string;
     // open-pencil 렌더러. 없으면 와이어프레임 단계가 **조용히** 빈다(compose 의 주석에 실측).
     wireframe: string;
+    /** age-fabric: og-fabric's own PostgreSQL (og_fabric + FDWs) */
+    fabricDb?: string;
   };
-  imageIds: Record<keyof RuntimeManifest["images"], string>;
+  imageIds: Record<BaseImageKey, string> & { fabricDb?: string };
   /** registry manifest digests recorded when the release images were pushed — pulls are pinned to them */
-  imageDigests?: Partial<Record<keyof RuntimeManifest["images"], string>>;
+  imageDigests?: Partial<Record<ImageKey, string>>;
   /** compressed download sizes (bytes) — the progress total before the registry reports one */
-  imageSizes?: Partial<Record<keyof RuntimeManifest["images"], number>>;
+  imageSizes?: Partial<Record<ImageKey, number>>;
   architect: {
     python: string;
     app: string;
@@ -86,6 +116,8 @@ export interface DockerStackPorts {
   architect: number;
   // open-pencil 렌더러. Architect API 가 호스트에서 돌므로 호스트 포트가 있어야 닿는다.
   wireframe: number;
+  /** age-fabric: og-fabric on 127.0.0.1 — the shell's secrets channel */
+  fabric?: number;
 }
 
 interface PersistedDockerState {
@@ -143,6 +175,7 @@ function readManifest(root = runtimeDirectory()): RuntimeManifest {
     throw new Error("runtime.manifest_invalid: root must be an object");
   }
   const manifest = raw as RuntimeManifest;
+  const variant = deployVariantOf(manifest.deployVariant);
   if (manifest.schemaVersion !== MANIFEST_SCHEMA_VERSION) {
     throw new Error(
       `runtime.manifest_version_unsupported: expected=${MANIFEST_SCHEMA_VERSION} actual=${manifest.schemaVersion}`,
@@ -159,20 +192,11 @@ function readManifest(root = runtimeDirectory()): RuntimeManifest {
       throw new Error(`runtime.manifest_invalid: images.${name}`);
     }
   }
-  for (const required of [
-    "graphDb",
-    "graphBolt",
-    "analyzer",
-    "catalog",
-    "fabric",
-    "parser",
-    "gateway",
-    "wireframe",
-  ]) {
+  for (const required of requiredImageKeys(variant)) {
     if (!manifest.images?.[required as keyof RuntimeManifest["images"]]) {
       throw new Error(`runtime.manifest_invalid: missing image ${required}`);
     }
-    const imageId = manifest.imageIds?.[required as keyof RuntimeManifest["images"]];
+    const imageId = manifest.imageIds?.[required as keyof RuntimeManifest["imageIds"]];
     if (!/^sha256:[a-f0-9]{64}$/.test(imageId ?? "")) {
       throw new Error(`runtime.manifest_invalid: imageIds.${required}`);
     }
@@ -219,7 +243,7 @@ function readManifest(root = runtimeDirectory()): RuntimeManifest {
 
 async function runDocker(
   args: string[],
-  options: { env?: NodeJS.ProcessEnv; timeoutMs?: number; secret?: string; input?: string } = {},
+  options: { env?: NodeJS.ProcessEnv; timeoutMs?: number; secret?: string; secrets?: string[]; input?: string } = {},
 ): Promise<string> {
   const timeout = options.timeoutMs ?? DOCKER_COMMAND_TIMEOUT_MS;
   return await new Promise<string>((resolve, reject) => {
@@ -239,7 +263,8 @@ async function runDocker(
         }
         const secret = options.secret;
         const detail = `${stderr || stdout || error.message}`.trim();
-        const redacted = secret ? detail.split(secret).join("***") : detail;
+        let redacted = secret ? detail.split(secret).join("***") : detail;
+        for (const s of options.secrets ?? []) if (s) redacted = redacted.split(s).join("***");
         reject(
           new Error(
             `docker.command_failed: docker ${args.slice(0, 4).join(" ")}: ${redacted}`,
@@ -303,11 +328,11 @@ async function ensureImages(
   onProgress?: ProgressListener,
 ): Promise<void> {
   const images: ImageEntry[] = Object.entries(manifest.images).map(([name, ref]) => {
-    const key = name as keyof RuntimeManifest["images"];
+    const key = name as keyof RuntimeManifest["imageIds"];
     return {
       name,
       ref,
-      id: manifest.imageIds[key],
+      id: manifest.imageIds[key] as string, // readManifest: every required image has its id
       digest: manifest.imageDigests?.[key],
       size: manifest.imageSizes?.[key],
     };
@@ -432,7 +457,7 @@ function loadPersistedState(releaseId: string): PersistedDockerState | null {
   }
 }
 
-async function createState(releaseId: string): Promise<PersistedDockerState> {
+async function createState(releaseId: string, variant: DeployVariant = "ontological"): Promise<PersistedDockerState> {
   const state: PersistedDockerState = {
     schemaVersion: STATE_SCHEMA_VERSION,
     releaseId,
@@ -445,6 +470,7 @@ async function createState(releaseId: string): Promise<PersistedDockerState> {
       wireframe: await pickFreePort(),
     },
   };
+  if (variant === "age-fabric") state.ports.fabric = await pickFreePort();
   const file = statePath();
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const temporary = `${file}.tmp`;
@@ -460,7 +486,7 @@ function composeEnvironment(
 ): NodeJS.ProcessEnv {
   return {
     ...process.env,
-    COMPOSE_PROJECT_NAME,
+    COMPOSE_PROJECT_NAME: projectNameOf(manifest),
     ROBO_RELEASE_ID: manifest.releaseId,
     ROBO_IMAGE_GRAPH_DB: manifest.images.graphDb,
     ROBO_IMAGE_GRAPH_BOLT: manifest.images.graphBolt,
@@ -486,9 +512,29 @@ function composeEnvironment(
   };
 }
 
+/** age-fabric: what compose.age-fabric.yml reads on top of the common environment. */
+function ageFabricEnvironment(
+  manifest: RuntimeManifest,
+  state: PersistedDockerState,
+  secrets: AgeFabricSecrets,
+  internalToken: string,
+): NodeJS.ProcessEnv {
+  if (!manifest.images.fabricDb || !state.ports.fabric) throw new Error("runtime.manifest_invalid: images.fabricDb");
+  return {
+    ROBO_IMAGE_FABRIC_DB: manifest.images.fabricDb,
+    ROBO_AGE_ADMIN_PASSWORD: secrets.adminPassword,
+    ROBO_FABRIC_DB_PASSWORD: secrets.fabricDbPassword,
+    ROBO_FABRIC_QUERY_PASSWORD: secrets.fabricQueryPassword,
+    ROBO_FABRIC_SERVICE_TOKEN: secrets.fabricServiceToken,
+    // new every boot: only this process can use og-fabric's secrets channel
+    ROBO_FABRIC_INTERNAL_TOKEN: internalToken,
+    ROBO_FABRIC_PORT: String(state.ports.fabric),
+  };
+}
+
 function composeArgs(root: string, manifest: RuntimeManifest, command: string[]): string[] {
   const composeFile = ensureRuntimeChild(root, manifest.composeFile, "composeFile");
-  return ["compose", "--project-name", COMPOSE_PROJECT_NAME, "--file", composeFile, ...command];
+  return ["compose", "--project-name", projectNameOf(manifest), "--file", composeFile, ...command];
 }
 
 export async function startDockerStack(onProgress?: ProgressListener): Promise<DockerStackRuntime> {
@@ -500,6 +546,14 @@ export async function startDockerStack(onProgress?: ProgressListener): Promise<D
   await ensureImages(root, manifest, onProgress);
 
   const password = await neo4jPassword();
+  const variant = deployVariantOf(manifest.deployVariant);
+  if (variant === "age-fabric") {
+    const state = loadPersistedState(manifest.releaseId) ?? (await createState(manifest.releaseId, variant));
+    if (!state.ports.fabric) state.ports.fabric = await pickFreePort();
+    await startAgeFabricServices(root, manifest, state, password);
+    return await finishStart(root, manifest, state, password);
+  }
+  const COMPOSE_PROJECT_NAME = projectNameOf(manifest);
   const state = loadPersistedState(manifest.releaseId) ?? (await createState(manifest.releaseId));
   const env = composeEnvironment(manifest, state, password);
 
@@ -521,7 +575,17 @@ export async function startDockerStack(onProgress?: ProgressListener): Promise<D
     env,
     secret: password,
   });
+  return await finishStart(root, manifest, state, password);
+}
 
+/** What the app's own processes need once the stack is up (both configurations). */
+async function finishStart(
+  root: string,
+  manifest: RuntimeManifest,
+  state: PersistedDockerState,
+  password: string,
+): Promise<DockerStackRuntime> {
+  const COMPOSE_PROJECT_NAME = projectNameOf(manifest);
   const hostNeo4jUri = `bolt://127.0.0.1:${state.ports.neo4j}`;
   process.env.ROBO_GATEWAY_URL = `http://127.0.0.1:${state.ports.gateway}`;
   process.env.ROBO_CLUSTER_MCP_URL = `http://127.0.0.1:${state.ports.analyzer}/robo/mcp/`;
@@ -572,6 +636,17 @@ export async function stopDockerStack(): Promise<void> {
   const runtime = current;
   if (!runtime) return;
   const password = await neo4jPassword();
+  if (ageFabric) {
+    // the environment the stack was started with (its per-boot token included)
+    await runDocker(composeArgs(runtime.runtimeDir, runtime.manifest, ["stop"]), {
+      env: ageFabric.env,
+      secrets: ageFabric.redact,
+    });
+    ageFabric = null;
+    current = null;
+    log("info", "docker.stack.stopped", { projectName: runtime.projectName });
+    return;
+  }
   const persisted = loadPersistedState(runtime.releaseId);
   if (!persisted) throw new Error("docker.state_missing: cannot stop owned stack safely");
   await runDocker(
@@ -582,7 +657,152 @@ export async function stopDockerStack(): Promise<void> {
     },
   );
   current = null;
-  log("info", "docker.stack.stopped", { projectName: COMPOSE_PROJECT_NAME });
+  log("info", "docker.stack.stopped", { projectName: runtime.projectName });
+}
+
+// ─────────────────────────────────────────────────────────────── age-fabric
+
+interface AgeFabricRuntime {
+  env: NodeJS.ProcessEnv;
+  /** every secret in env: never in an error message */
+  redact: string[];
+  client: FabricClient;
+}
+
+let ageFabric: AgeFabricRuntime | null = null;
+
+/** The keychain-aware store age-fabric-stack.ts writes through (safeStorage for source passwords). */
+const secretStore: SecretStoreLike = {
+  get: getSecret,
+  set: (id, value, options) => setSecret(id, value, options),
+  remove: deleteSecret,
+};
+
+/** og-fabric's client while the age-fabric stack runs (null otherwise): the IPC handlers use it. */
+export function getFabricClient(): FabricClient | null {
+  return ageFabric?.client ?? null;
+}
+
+export function getDeployVariant(): DeployVariant | null {
+  return current ? deployVariantOf(current.manifest.deployVariant) : null;
+}
+
+/**
+ * compose.age-fabric.yml: the two databases first (roles, graphs, passwords of this install), then
+ * og-fabric and the gateway (the keychain secrets handed over, the v1 migration once), then the rest.
+ */
+async function startAgeFabricServices(
+  root: string,
+  manifest: RuntimeManifest,
+  state: PersistedDockerState,
+  password: string,
+): Promise<void> {
+  const secrets = await ensureAgeFabricSecrets(secretStore);
+  const internalToken = newToken();
+  const env = {
+    ...composeEnvironment(manifest, state, password),
+    ...ageFabricEnvironment(manifest, state, secrets, internalToken),
+  };
+  const redact = [
+    password,
+    secrets.adminPassword,
+    secrets.fabricDbPassword,
+    secrets.fabricQueryPassword,
+    secrets.fabricServiceToken,
+    internalToken,
+  ];
+  const compose = (command: string[], options: { input?: string; timeoutMs?: number } = {}) =>
+    runDocker(composeArgs(root, manifest, command), { env, secrets: redact, ...options });
+  const up = (...services: string[]) => compose(["up", "--detach", "--wait", "--wait-timeout", "300", ...services]);
+  const exec: ExecInService = (service, args, options = {}) =>
+    compose(["exec", "-T", service, ...args], { input: options.input, timeoutMs: 60_000 });
+
+  log("info", "docker.stack.starting", {
+    releaseId: manifest.releaseId,
+    projectName: projectNameOf(manifest),
+    variant: "age-fabric",
+  });
+  await up("age-db", "fabric-db");
+  await prepareAgeDb(exec, { user: GRAPH_USER, password, graphs: [GRAPH_DESIGN, GRAPH_ANALYSIS] }, log);
+  await prepareFabricDb(exec, secrets);
+  await restartFailingServices(root, manifest, env, password);
+  await up("fabric", "age-bolt");
+
+  const client = new FabricClient(
+    `http://127.0.0.1:${state.ports.fabric}`,
+    secrets.fabricServiceToken,
+    internalToken,
+  );
+  await client.waitHealthy();
+  await deliverKeychainSecrets(client, secretStore, log);
+  try {
+    await migrateV1Plaintext(
+      {
+        findV1: () => findV1GraphDb(),
+        runMigrate: (extra, args) => runFabricMigrate(root, manifest, env, redact, extra, args),
+        store: secretStore,
+        markerFile: path.join(getDataDir(), "runtime", "age-fabric-migration.json"),
+        log,
+      },
+      { user: GRAPH_USER, password, database: GRAPH_DESIGN },
+    );
+  } catch (err) {
+    // the stack still starts: migrated datasources are not lost (v1 keeps them), the next start tries again
+    log("warn", "fabric.migrate.error", { message: err instanceof Error ? err.message : String(err) });
+  }
+  await up();
+  ageFabric = { env, redact, client };
+}
+
+/** The default configuration's graph-db, if one is running (the plaintext migration reads it). */
+async function findV1GraphDb(): Promise<{ hostPort: number } | null> {
+  const project = process.env.ROBO_V1_COMPOSE_PROJECT || DEFAULT_COMPOSE_PROJECT_NAME;
+  const names = await runDocker(
+    [
+      "ps",
+      "--filter",
+      `label=com.docker.compose.project=${project}`,
+      "--filter",
+      "label=com.docker.compose.service=graph-db",
+      "--format",
+      "{{.Names}}",
+    ],
+    { timeoutMs: 30_000 },
+  );
+  const name = names.split("\n").map((n) => n.trim()).find(Boolean);
+  if (!name) return null;
+  const published = await runDocker(["port", name, "5432/tcp"], { timeoutMs: 30_000 }).catch(() => "");
+  const port = Number(published.split("\n")[0]?.split(":").pop());
+  return Number.isInteger(port) && port > 0 ? { hostPort: port } : null;
+}
+
+/**
+ * og-fabric-migrate inside the fabric container. Its standard output holds the secrets, so this
+ * never goes through runDocker (whose error message carries the output) and never logs it.
+ */
+async function runFabricMigrate(
+  root: string,
+  manifest: RuntimeManifest,
+  env: NodeJS.ProcessEnv,
+  redact: string[],
+  extra: Record<string, string>,
+  args: string[],
+): Promise<{ stdout: string; stderr: string; code: number }> {
+  const passEnv = Object.keys(extra).flatMap((name) => ["-e", name]);
+  const command = composeArgs(root, manifest, ["exec", "-T", ...passEnv, "fabric", ...args]);
+  return await new Promise((resolve) => {
+    execFile(
+      "docker",
+      command,
+      { env: { ...env, ...extra }, timeout: 5 * 60_000, windowsHide: true, maxBuffer: 16 * 1024 * 1024 },
+      (error, stdout, stderr) => {
+        const code = error ? (typeof (error as { code?: unknown }).code === "number" ? (error as { code: number }).code : -1) : 0;
+        let report = String(stderr ?? "");
+        for (const s of [...redact, ...Object.values(extra)]) if (s) report = report.split(s).join("***");
+        resolve({ stdout: String(stdout ?? ""), stderr: report, code });
+      },
+    );
+  });
 }
 
 export function getDockerStackRuntime(): DockerStackRuntime | null {
