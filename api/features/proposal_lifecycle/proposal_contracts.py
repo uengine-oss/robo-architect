@@ -695,6 +695,10 @@ class TestResultItem(BaseModel):
     # lastReason = 가장 최근에 통과하지 못한 사유(통과한 뒤에도 직전 실패 사유를 남긴다).
     attempts: Optional[int] = None
     lastReason: Optional[str] = None
+    # B-3 ⑪ ② 판정 기준 원문 — 이 항목을 어느 GWT/의도로 쟀는가.
+    # criterionSource: "tactical"(Command GWT) | "strategic"(UserStory 인수조건) | "tacticalDiff"(구조)
+    criterion: Optional[str] = None
+    criterionSource: Optional[str] = None
 
 
 class TestRunResult(BaseModel):

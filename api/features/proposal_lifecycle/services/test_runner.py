@@ -70,12 +70,24 @@ def _criteria_from_strategic_diff(raw) -> list[dict]:
     return stories
 
 
+# B-3 ⑪ — 판정 기준의 출처. 화면이 "어느 GWT 로 쟀나"를 보여 줄 때 쓴다.
+SOURCE_TACTICAL = "tactical"      # Plan 의 Command GWT — 구조(명령 단위 동작)
+SOURCE_STRATEGIC = "strategic"    # Intent 의 UserStory 인수조건 — 인수(사용자 관점)
+SOURCE_TACTICAL_DIFF = "tacticalDiff"  # 구조 검증 항목 — Tactical Diff 의 semanticDiff
+
+
+def _tag(stories: list[dict], source: str) -> list[dict]:
+    return [{**s, "source": source} for s in stories]
+
+
 def _fetch_acceptance_criteria(proposal_id: str) -> list[dict]:
     """Load acceptance criteria deterministically before the Proposal is accepted.
 
-    Detailed/Simplified proposals own their pending Command GWT in tacticalDiff.
-    EFFECT relationships may not exist until graph application, so they are only a
-    fallback, followed by Strategic UserStory criteria for non-tactical changes.
+    B-3 ⑪: **둘 다 검증한다** — 전술(Command GWT, tacticalDiff)=구조, 전략(UserStory
+    인수조건)=인수. 예전에는 전술 GWT 가 있으면 Intent 의 인수조건이 검증에 **안 쓰였다**
+    (Detailed DDD 등). 각 묶음에 `source` 를 단다(tactical | strategic).
+
+    전략 쪽 원천은 EFFECT 로 붙은 UserStory(적용 뒤) → 없으면 strategicDiff 의 userStories.
     """
     with get_session() as session:
         proposal = session.run(
@@ -87,8 +99,6 @@ def _fetch_acceptance_criteria(proposal_id: str) -> list[dict]:
             return []
 
         tactical = _criteria_from_tactical_diff(proposal.get("tacticalDiff"))
-        if tactical:
-            return tactical
 
         graph = session.run(
             "MATCH (p:Proposal {id: $id})-[:EFFECT]->(us:UserStory) "
@@ -97,9 +107,116 @@ def _fetch_acceptance_criteria(proposal_id: str) -> list[dict]:
             "us.acceptanceCriteria AS criteria",
             id=proposal_id,
         ).data()
-        if graph:
-            return graph
-        return _criteria_from_strategic_diff(proposal.get("strategicDiff"))
+        strategic = graph or _criteria_from_strategic_diff(proposal.get("strategicDiff"))
+        return _tag(tactical, SOURCE_TACTICAL) + _tag(strategic, SOURCE_STRATEGIC)
+
+
+def _gwt_part(v) -> str:
+    if isinstance(v, dict):
+        return str(v.get("name") or v.get("description") or v.get("text") or "").strip()
+    if isinstance(v, list):
+        return ", ".join(p for p in (_gwt_part(x) for x in v) if p)
+    return str(v or "").strip()
+
+
+def format_criterion(c) -> str:
+    """GWT 한 건을 사람이 읽는 원문 한 줄로. 문자열이면 그대로, dict 면 Given/When/Then 을 잇는다."""
+    if isinstance(c, str):
+        return c.strip()
+    if not isinstance(c, dict):
+        return str(c)
+    head = str(c.get("scenario") or c.get("scenarioDescription") or c.get("title") or "").strip()
+    parts = []
+    for key, label in (("given", "Given"), ("when", "When"), ("then", "Then")):
+        text = _gwt_part(c.get(key))
+        if text:
+            parts.append(f"{label} {text}")
+    body = " / ".join(parts)
+    if head and body:
+        return f"[{head}] {body}"
+    return head or body or json.dumps(c, ensure_ascii=False)
+
+
+def number_scenarios(stories: list[dict], start: int = 1) -> list[dict]:
+    """인수 조건 시나리오에 **서버가 먼저** scenarioId(SC-NNN)를 매긴다.
+
+    LLM 이 번호를 정하면 결과 항목을 원래 GWT 로 되짚을 길이 없다 — 판정 기준 원문을
+    결과에 싣고(B-3 ⑪ ②) 부분 재검증 id 를 안정시키려면 번호가 우리 것이어야 한다.
+    """
+    out: list[dict] = []
+    n = start
+    for s in stories:
+        criteria = _json_value(s.get("criteria"), [])
+        if not isinstance(criteria, list):
+            criteria = [criteria]
+        for c in criteria:
+            out.append({
+                "scenarioId": f"SC-{n:03d}",
+                "storyId": s.get("storyId"),
+                "storyTitle": s.get("storyTitle") or "",
+                "criterionSource": s.get("source") or SOURCE_STRATEGIC,
+                "scenario": c,
+                "criterion": format_criterion(c),
+            })
+            n += 1
+    return out
+
+
+def _ops_summary(item: dict) -> str:
+    sd = item.get("semanticDiff")
+    ops = (sd.get("ops") if isinstance(sd, dict) else None) or []
+    head = f"{item.get('changeType') or 'MODIFY'} {item.get('nodeLabel') or ''} {item.get('nodeTitle') or ''}".strip()
+    if not ops:
+        return head
+    text = json.dumps(ops, ensure_ascii=False)
+    if len(text) > 600:
+        text = text[:600] + "…"
+    return f"{head} · {text}"
+
+
+def annotate_criteria(result: dict, scenarios: list[dict], tactical_diff) -> dict:
+    """결과 항목마다 **판정 기준 원문**(criterion)과 출처(criterionSource)를 싣는다.
+
+    - 인수 조건: 서버가 매긴 scenarioId 로 원래 GWT 를 찾는다. id 가 어긋나면
+      (storyId, 같은 이야기 안 순번)으로 한 번 더 찾는다.
+    - 구조 항목: storyId(요소 id)로 Tactical Diff 항목을 찾아 의도된 변경(ops)을 싣는다.
+    이미 값이 있으면(부분 재검증 병합 등) 건드리지 않는다.
+    """
+    by_id = {s["scenarioId"]: s for s in scenarios}
+    by_story: dict[str, list[dict]] = {}
+    for s in scenarios:
+        by_story.setdefault(str(s.get("storyId")), []).append(s)
+    seen_story: dict[str, int] = {}
+
+    tactical = _json_value(tactical_diff, [])
+    tactical_by_key: dict[str, dict] = {}
+    if isinstance(tactical, list):
+        for t in tactical:
+            if isinstance(t, dict):
+                for k in (t.get("nodeId"), t.get("tempId"), t.get("nodeTitle")):
+                    if k:
+                        tactical_by_key.setdefault(str(k), t)
+
+    for it in result.get("items") or []:
+        if not isinstance(it, dict) or it.get("criterion"):
+            continue
+        if it.get("category") == "structural":
+            t = tactical_by_key.get(str(it.get("storyId"))) or tactical_by_key.get(str(it.get("storyTitle")))
+            if t:
+                it["criterion"] = _ops_summary(t)
+                it["criterionSource"] = SOURCE_TACTICAL_DIFF
+            continue
+        src = by_id.get(str(it.get("scenarioId")))
+        if src is None:
+            key = str(it.get("storyId"))
+            idx = seen_story.get(key, 0)
+            seen_story[key] = idx + 1
+            cands = by_story.get(key) or []
+            src = cands[idx] if idx < len(cands) else None
+        if src is not None:
+            it["criterion"] = src["criterion"]
+            it["criterionSource"] = src["criterionSource"]
+    return result
 
 
 def _acceptance_scenario_count(stories: list[dict]) -> int:
@@ -301,21 +418,21 @@ def prepare_partial_validation(proposal_id: str, scenario_ids: list[str]):
 
 
 def _build_test_prompt(proposal_id: str, stories: list[dict],
-                       worktree_path: str | None, tactical_diff: str) -> str:
-    scenarios = []
-    for s in stories:
-        criteria = s.get("criteria") or []
-        if isinstance(criteria, str):
-            try:
-                criteria = json.loads(criteria)
-            except Exception:
-                criteria = [criteria]
-        for c in criteria:
-            scenarios.append({
-                "storyId": s["storyId"],
-                "storyTitle": s["storyTitle"],
-                "scenario": c,
-            })
+                       worktree_path: str | None, tactical_diff: str,
+                       scenarios: list[dict] | None = None) -> str:
+    if scenarios is None:
+        scenarios = number_scenarios(stories)
+    rows = [
+        {
+            "scenarioId": s["scenarioId"],
+            "criterionSource": s["criterionSource"],
+            "storyId": s["storyId"],
+            "storyTitle": s["storyTitle"],
+            "scenario": s["scenario"],
+        }
+        for s in scenarios
+    ]
+    next_no = len(scenarios) + 1
 
     return (
         f"Proposal ID: {proposal_id}\n"
@@ -323,7 +440,11 @@ def _build_test_prompt(proposal_id: str, stories: list[dict],
         f"robo-sync 추출기 경로(EXTRACTOR_ROOT): {_EXTRACTOR_ROOT}\n"
         "지원 추출기: TypeScript(ts_extract.mjs), Python(python_extract.py), "
         "Java(java_extract.py), Avro(avro_extract.py)\n\n"
-        f"검증할 인수 조건(GWT):\n{json.dumps(scenarios, ensure_ascii=False, indent=2)}\n\n"
+        f"검증할 인수 조건(GWT):\n{json.dumps(rows, ensure_ascii=False, indent=2)}\n\n"
+        "criterionSource: tactical = Plan 의 Command GWT(구조 — 명령 단위 동작), "
+        "strategic = Intent 의 UserStory 인수조건(인수 — 사용자 관점). **둘 다** 판정하세요.\n"
+        "인수 조건 item 의 scenarioId 는 **위에 주어진 값 그대로** 쓰고, "
+        f"구조 검증 item 은 SC-{next_no:03d} 부터 이어서 매기세요.\n\n"
         f"Tactical Diff (구조 검증용 — Aggregate/Command/Event/VO 의도된 변경):\n"
         f"{tactical_diff or '[]'}\n\n"
         "① 각 GWT 시나리오를 LLM-as-judge로 검증(category: acceptance)하고, "
@@ -406,6 +527,7 @@ async def stream_validation(proposal_id: str, scenario_ids: list[str] | None = N
 
     existing: dict | None = None
     targets: list[dict] = []
+    scenarios: list[dict] = []
     if partial:
         err, existing, targets = prepare_partial_validation(proposal_id, scenario_ids)
     else:
@@ -438,8 +560,13 @@ async def stream_validation(proposal_id: str, scenario_ids: list[str] | None = N
             yield "done", {"proposalId": proposal_id, "status": "PENDING_ACCEPTANCE"}
             return
 
-        yield "log_line", {"text": f"인수 조건 {_acceptance_scenario_count(stories)}건 + 구조 검증 대상 로드. robo-sync 추출기로 대조합니다…"}
-        human_prompt = _build_test_prompt(proposal_id, stories, worktree_path, tactical_diff)
+        scenarios = number_scenarios(stories)
+        n_tac = sum(1 for s in scenarios if s["criterionSource"] == SOURCE_TACTICAL)
+        yield "log_line", {"text": (
+            f"인수 조건 {len(scenarios)}건(전술 GWT {n_tac} · 전략 인수조건 {len(scenarios) - n_tac}) "
+            "+ 구조 검증 대상 로드. robo-sync 추출기로 대조합니다…"
+        )}
+        human_prompt = _build_test_prompt(proposal_id, stories, worktree_path, tactical_diff, scenarios)
 
     output_lines: list[str] = []
     suppress_log = False
@@ -466,7 +593,7 @@ async def stream_validation(proposal_id: str, scenario_ids: list[str] | None = N
     if partial:
         result = merge_partial_results(existing, fresh, scenario_ids)
     else:
-        result = stamp_attempts(fresh)
+        result = stamp_attempts(annotate_criteria(fresh, scenarios, tactical_diff))
 
     _save_results(proposal_id, result, info["history"])
     SmartLogger.log("INFO", f"Validation done (stream): {proposal_id}",
@@ -503,6 +630,7 @@ async def run_tests(proposal_id: str, scenario_ids: list[str] | None = None,
     tactical_diff = info["tacticalDiff"]
 
     existing: dict | None = None
+    scenarios: list[dict] = []
     if partial:
         existing, targets = partial_ctx or (None, [])
         human_prompt = _build_partial_prompt(proposal_id, targets, worktree_path, tactical_diff)
@@ -512,7 +640,8 @@ async def run_tests(proposal_id: str, scenario_ids: list[str] | None = None,
         if not stories and not has_tactical:
             _save_results(proposal_id, _empty_result(proposal_id), info["history"])
             return
-        human_prompt = _build_test_prompt(proposal_id, stories, worktree_path, tactical_diff)
+        scenarios = number_scenarios(stories)
+        human_prompt = _build_test_prompt(proposal_id, stories, worktree_path, tactical_diff, scenarios)
 
     raw = await run_skill_once(
         _SKILL_ROOT, _SKILL_NAME, human_prompt, timeout=180,
@@ -523,7 +652,7 @@ async def run_tests(proposal_id: str, scenario_ids: list[str] | None = None,
     if partial:
         test_result = merge_partial_results(existing, fresh, scenario_ids)
     else:
-        test_result = stamp_attempts(fresh)
+        test_result = stamp_attempts(annotate_criteria(fresh, scenarios, tactical_diff))
 
     _save_results(proposal_id, test_result, info["history"])
     SmartLogger.log("INFO", f"Test run done: {proposal_id}",

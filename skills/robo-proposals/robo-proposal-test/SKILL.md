@@ -11,7 +11,14 @@ Proposal ID: PRO-NNN
 샌드박스 경로: /path/to/.sandbox/proposal/PRO-NNN  ← 아래 <SANDBOX>
 
 검증할 인수 조건(GWT):
-[ { "storyId": "...", "storyTitle": "...", "scenario": "Given ... When ... Then ..." } ]
+[ { "scenarioId": "SC-001", "criterionSource": "tactical|strategic",
+    "storyId": "...", "storyTitle": "...", "scenario": "Given ... When ... Then ..." } ]
+```
+- `criterionSource`: `tactical` = Plan 의 Command GWT(구조 — 명령 단위 동작), `strategic` = Intent 의
+  UserStory 인수조건(인수 — 사용자 관점). 둘 다 올 수 있고 **둘 다 판정한다**.
+- 인수 조건 item 의 `scenarioId` 는 **주어진 값 그대로** 쓴다(서버가 이 id 로 판정 기준 원문을 되짚는다).
+  구조 검증 item 은 프롬프트가 알려 주는 번호부터 이어서 매긴다.
+```
 
 Tactical Diff (구조 검증용):
 [ { "nodeId":"AGG-refund","nodeLabel":"Aggregate","nodeTitle":"환불 Aggregate",

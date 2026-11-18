@@ -73,6 +73,8 @@
             <span v-if="item.category" :class="['cat-badge', `cat-badge--${item.category}`]">
               {{ item.category === 'structural' ? t('proposals.tests.categoryStructural') : t('proposals.tests.categoryAcceptance') }}
             </span>
+            <!-- B-3 ⑪ 판정 기준의 출처 — 전술 GWT(구조) / Intent 인수조건(인수) -->
+            <span v-if="sourceLabel(item)" :class="['src-badge', `src-badge--${item.criterionSource}`]">{{ sourceLabel(item) }}</span>
             <span class="test-item__story">{{ item.storyTitle }}</span>
             <span v-if="(item.attempts || 1) > 1" class="test-item__attempts" :title="t('proposals.tests.attemptsTitle')">
               {{ t('proposals.tests.attempts', { n: item.attempts }) }}
@@ -80,6 +82,11 @@
             <span class="test-item__id">{{ item.scenarioId }}</span>
           </div>
           <p class="test-item__scenario">{{ item.scenario }}</p>
+          <!-- B-3 ⑪ ② 판정 기준 원문 — 결과만 보면 "무엇으로 쟀나"를 모른다 -->
+          <details v-if="item.criterion" class="test-item__criterion">
+            <summary>{{ t('proposals.tests.criterion') }}</summary>
+            <p>{{ item.criterion }}</p>
+          </details>
           <p v-if="item.reason" class="test-item__reason">{{ item.reason }}</p>
           <!-- ③ 직전 실패 사유 — 지금 사유와 다를 때만(통과한 뒤 "무엇이 고쳐졌나"가 보이게). -->
           <p v-if="item.lastReason && item.lastReason !== item.reason" class="test-item__last-reason">
@@ -146,6 +153,11 @@ const canFixInCell = computed(() =>
 function oneLine(s, max) {
   const flat = String(s || '').replace(/\s+/g, ' ').trim()
   return max && flat.length > max ? flat.slice(0, max) + '…' : flat
+}
+
+function sourceLabel(item) {
+  const s = item?.criterionSource
+  return s ? t(`proposals.tests.source.${s}`) : ''
 }
 
 function fixCommand(item, round = null) {
@@ -249,6 +261,11 @@ onMounted(async () => {
 .test-item__actions { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
 .test-item__actions-hint { font-size: 11px; color: var(--color-text-light); }
 .test-item__reason { margin: 4px 0 0; color: var(--color-danger); font-size: 12px; font-style: italic; }
+.src-badge { font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 3px; background: var(--status-neutral-bg); color: var(--status-neutral-fg); }
+.src-badge--strategic { background: var(--status-purple-bg, #f3e8ff); color: var(--status-purple-fg, #7c3aed); }
+.test-item__criterion { margin: 4px 0 0; font-size: 12px; color: var(--color-text-light); }
+.test-item__criterion summary { cursor: pointer; font-size: 11px; }
+.test-item__criterion p { margin: 4px 0 0; white-space: pre-wrap; word-break: break-word; color: var(--color-text); }
 .test-item__last-reason { margin: 2px 0 0; color: var(--color-text-light); font-size: 11px; }
 .test-item__attempts { font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 3px; background: var(--status-neutral-bg); color: var(--status-neutral-fg); }
 .fix-loop-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 12px; padding: 6px 10px; border-radius: 6px; font-size: 12px; background: var(--color-bg-secondary); border: 1px solid var(--color-border); }
