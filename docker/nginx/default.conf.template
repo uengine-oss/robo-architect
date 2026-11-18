@@ -54,6 +54,15 @@ server {
         proxy_send_timeout 3600s;
     }
 
+    # Analyzer 리모트의 입구 — **이름에 해시가 없다**(Module Federation 규약상 고정 이름).
+    # 아래 자산 규칙에 휩쓸려 30일 immutable 로 나가던 때는, 새 판을 올려도 브라우저가
+    # 예전 remoteEntry → 예전 분석기 청크를 계속 썼다. 실제로 메뉴 숨김(hideNav)이 없던
+    # 분석기가 떠서 레거시 메뉴가 두 줄로 보였다(2026-11-18). 정확 일치는 정규식보다 먼저 잡힌다.
+    location = /analyzer/assets/remoteEntry.js {
+        try_files $uri =404;
+        add_header Cache-Control "no-cache";
+    }
+
     # 해시가 붙은 빌드 자산 — 오래 둔다.
     location ~* ^/(assets|analyzer/assets)/ {
         try_files $uri =404;

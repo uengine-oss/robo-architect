@@ -20,7 +20,17 @@ const FRONTEND_SRC = fileURLToPath(new URL('./src', import.meta.url))
 //   개발 : http://localhost:5001 (analyzer 를 build 후 preview 로 서빙)
 //   배포 : 빌드 스크립트가 ANALYZER_REMOTE_URL='analyzer/assets/remoteEntry.js' 주입
 //          → Electron 이 app://app/analyzer/ 로 co-locate 서빙(별도 5001 서버 불필요)
-const ANALYZER_REMOTE = process.env.ANALYZER_REMOTE_URL || 'http://localhost:5001/assets/remoteEntry.js'
+//   웹판 : Dockerfile.web 이 '/analyzer/assets/remoteEntry.js'(절대 경로 — nginx 가 서빙) 주입.
+//
+// 웹판은 빌드마다 바뀌는 `?v=` 를 붙인다. remoteEntry 는 이름에 해시가 없는데, 예전 nginx 가
+// 30일 immutable 로 내보냈다 — 그때 받아 둔 브라우저는 새 판을 올려도 서버에 다시 묻지 않고
+// 예전 분석기를 계속 띄운다(2026-11-18, 메뉴 숨김이 없는 분석기가 떠 레거시 메뉴가 두 줄).
+// nginx 를 no-cache 로 고쳐도 이미 받아 둔 캐시는 못 바꾸므로, 주소 자체를 바꿔 피한다.
+// 데스크톱(app:// 상대 경로)은 그 캐시 문제가 없고 프로토콜 처리기를 건드리지 않게 그대로 둔다.
+const ANALYZER_REMOTE_BASE = process.env.ANALYZER_REMOTE_URL || 'http://localhost:5001/assets/remoteEntry.js'
+const ANALYZER_REMOTE = ANALYZER_REMOTE_BASE.startsWith('/')
+  ? `${ANALYZER_REMOTE_BASE}${ANALYZER_REMOTE_BASE.includes('?') ? '&' : '?'}v=${Date.now().toString(36)}`
+  : ANALYZER_REMOTE_BASE
 const ROBO_GATEWAY = process.env.ROBO_GATEWAY_URL || 'http://127.0.0.1:9000'
 
 // 고객 · 판 — 브랜치가 아니라 **빌드 입력**이다(단일 브랜치 통합 설계 §1).
