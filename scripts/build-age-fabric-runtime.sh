@@ -17,15 +17,9 @@
 #                           (build-packaged-runtime.sh).
 #   runtime-manifest.json   deployVariant age-fabric, the local images by reference and ID, no pull
 #
-# Images (key=ref; --image replaces one). Build the two that are not on this machine yet:
-#   graphDb    uengine/supabase-postgres-age:15.8.1.060-age1.8.0   (age-supabase/build.sh)
-#   graphBolt  uengine/ontological-bolt:age                        (age-supabase/gateway/build.sh)
-#   fabric     ogfab-service:stage4                                (og-fabric stage4: docker build -t ogfab-service:stage4 service/)
-#   fabricDb   ogfab-db:stage4                                     (og-fabric stage4: image/build-local.sh; bake it from the same commit as the service)
-#   catalog    uengine/robo-data-catalog:age-fabric                (from the submodule BRANCH, not the pin:
-#              git -C robo-analyzer/robo-data-catalog archive feat/age-fabric | docker build -t uengine/robo-data-catalog:age-fabric -)
-#              The superproject keeps the catalog pin at 1f1aaa6 so the default configuration does not change.
-#   analyzer · parser · gateway  uengine/robo-analyzer · robo-antlr-parser · robo-api-gateway :lite-mac
+# Images: scripts/age-fabric-images.txt (key=ref with --image replaces one) — how each is built is there.
+# analyzer · parser · gateway · wireframe are the regular release's images: pull them first
+#   (docker pull ghcr.io/uengine-oss/robo-architect-lite-<component>:0.1.4).
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -54,8 +48,7 @@ command -v docker >/dev/null || die "docker is required (image IDs are read from
 mkdir -p "$OUT/config" "$OUT/architect/app"
 # the release's service settings and the backend's settings file, no manifest (images differ here)
 write_runtime_files --root "$ROOT" --out "$OUT" --version "$VERSION" --registry local --source-tag none \
-  --python architect/python/bin/python3 --no-images >/dev/null
-rm -f "$OUT/compose.yml"
+  --python architect/python/bin/python3 --no-images --variant age-fabric >/dev/null
 if [ -n "$VENV" ]; then
   [ -x "$VENV/bin/python3" ] || die "--venv $VENV has no bin/python3"
   rm -rf "$OUT/architect/python"
@@ -70,33 +63,18 @@ import hashlib, json, shutil, subprocess, sys
 from pathlib import Path
 
 root, out, version, overrides = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3], sys.argv[4:]
-images = {
-    "graphDb":   "uengine/supabase-postgres-age:15.8.1.060-age1.8.0",
-    "graphBolt": "uengine/ontological-bolt:age",
-    "analyzer":  "uengine/robo-analyzer:lite-mac",
-    "catalog":   "uengine/robo-data-catalog:age-fabric",
-    "fabric":    "ogfab-service:stage4",
-    "fabricDb":  "ogfab-db:stage4",
-    "parser":    "uengine/robo-antlr-parser:lite-mac",
-    "gateway":   "uengine/robo-api-gateway:lite-mac",
-}
+images = {}
+for line in (root / "scripts" / "age-fabric-images.txt").read_text(encoding="utf-8").splitlines():
+    if line.strip() and not line.startswith("#"):
+        key, ref, _ = line.split("|")
+        images[key] = ref
 for o in overrides:
     key, _, ref = o.partition("=")
     if key not in images or not ref:
         raise SystemExit(f"[runtime] --image {o}: key=ref with key one of {', '.join(images)}")
     images[key] = ref
 
-# og-fabric's settings (FABRIC-PROGRESS.md §9 #2). The DSNs, the service token and the channel token
-# are not here: compose.age-fabric.yml builds them from what the app passes at start.
-(out / "config" / "fabric.env").write_text("""OG_FABRIC_LOCALHOST_AS=host.docker.internal
-OG_FABRIC_INLINE_PASSWORDS=refuse
-OG_FABRIC_QUERY_TIMEOUT_MS=30000
-OG_FABRIC_QUERY_TIMEOUT_MS_MAX=300000
-OG_FABRIC_ADMIN_TIMEOUT_MS=120000
-OG_FABRIC_INTERNAL_LOOPBACK_ONLY=0
-""", encoding="utf-8")
-shutil.copyfile(root / "desktop" / "runtime" / "compose.age-fabric.yml", out / "compose.age-fabric.yml")
-
+# compose.age-fabric.yml and og-fabric's settings (config/fabric.env) came from write_runtime_files above
 
 def image_id(ref: str) -> str:
     try:
@@ -121,7 +99,7 @@ env["architect"] = {"file": "architect/app/.env", "sha256": sha(out / "architect
 og_fabric = Path("/Users/uengine/og-fabric")
 age_main = Path("/Users/uengine/worktrees/age-main")
 manifest = {
-    "schemaVersion": 3,
+    "schemaVersion": 4,  # MANIFEST_SCHEMA_VERSION in desktop/src/main/docker-stack.ts
     "deployVariant": "age-fabric",
     "releaseId": f"lite-{version}-age-fabric",
     "releaseChannel": "local",

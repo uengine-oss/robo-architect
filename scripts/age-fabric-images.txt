@@ -1,0 +1,22 @@
+# The images of the age-fabric configuration (Apache AGE + og-fabric) — one list read by
+# scripts/build-age-fabric-runtime.sh (development runtime), scripts/packaged-runtime-common.sh
+# (release runtime, --variant age-fabric) and scripts/release/push-images.sh (--variant age-fabric).
+#
+# manifest key | local image it is pushed from | release component (ghcr.io/uengine-oss/robo-architect-lite-<component>)
+#
+# graphDb    ontological-db age/main: age-supabase/build.sh (Supabase Postgres 15.8 + AGE 1.8.0)
+# graphBolt  ontological-db age/main: age-supabase/gateway/build.sh (the Bolt gateway, OG_BOLT_BACKEND=age)
+# catalog    git -C robo-analyzer/robo-data-catalog archive feat/age-fabric | docker build -t uengine/robo-data-catalog:age-fabric -
+#            (the superproject's catalog pin stays where the default configuration has it)
+# fabric     og-fabric stage4: docker build -t ogfab-service:stage4 service/
+# fabricDb   og-fabric stage4: the PG16 image with the og_fabric extension, baked from the same commit as the service
+# analyzer · parser · gateway · wireframe: the regular release's images, unchanged (pull them first)
+graphDb|uengine/supabase-postgres-age:15.8.1.060-age1.8.0|graph-db
+graphBolt|uengine/ontological-bolt:age|graph-bolt
+analyzer|ghcr.io/uengine-oss/robo-architect-lite-analyzer:0.1.4|analyzer
+catalog|uengine/robo-data-catalog:age-fabric|catalog
+fabric|ogfab-service:stage4|fabric
+fabricDb|ogfab-db:stage4|fabric-db
+parser|ghcr.io/uengine-oss/robo-architect-lite-parser:0.1.4|parser
+gateway|ghcr.io/uengine-oss/robo-architect-lite-gateway:0.1.4|gateway
+wireframe|ghcr.io/uengine-oss/robo-architect-lite-wireframe:0.1.4|wireframe

@@ -307,6 +307,37 @@ services:
       retries: 24
       start_period: 15s
 
+  # ── wireframe renderer (open-pencil): as in compose.yml — the host Architect API calls it ──
+  wireframe:
+    image: ${ROBO_IMAGE_WIREFRAME}
+    restart: unless-stopped
+    labels:
+      org.uengine.robo.release: ${ROBO_RELEASE_ID}
+      org.uengine.robo.component: wireframe
+    environment:
+      WIREFRAME_SERVICE_PORT: "7610"
+      # 이미지를 구울 때 같이 들어간다(open-pencil `docs/components.fig`).
+      COMPONENT_LIBRARY_PATH: /app/docs/components.fig
+    ports:
+      # **루프백에만 연다.** Architect API 는 호스트에서 돌므로 호스트 포트가
+      # 있어야 닿는다 — analyzer·gateway 와 같은 이유다.
+      - "127.0.0.1:${ROBO_WIREFRAME_PORT}:7610"
+    healthcheck:
+      # **`oven/bun:1.4-slim` 에는 curl·wget·nc 가 하나도 없다**(실측). 도구를
+      # 더해 이미지를 키우는 대신 bun 으로 잰다. `/health` 는 컴포넌트 카탈로그를
+      # 실제로 읽은 뒤에야 `status:ok` 를 내므로, 포트만 열린 상태와 구분된다.
+      test:
+        [
+          "CMD",
+          "bun",
+          "-e",
+          "const r=await fetch('http://127.0.0.1:7610/health');if(!r.ok)process.exit(1);const j=await r.json();process.exit(j.status==='ok'?0:1)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
 networks:
   graph:
     internal: true

@@ -445,8 +445,13 @@ function loadPersistedState(releaseId: string): PersistedDockerState | null {
       "architect",
       "wireframe",
     ];
+    // age-fabric adds og-fabric's port ("fabric"); the default configuration never has it.
+    const optional: (keyof DockerStackPorts)[] = ["fabric"];
     const keys = Object.keys(parsed.ports);
-    if (keys.length !== expected.length || expected.some((k) => !keys.includes(k))) {
+    if (
+      expected.some((k) => !keys.includes(k)) ||
+      keys.some((k) => !expected.includes(k as keyof DockerStackPorts) && !optional.includes(k as keyof DockerStackPorts))
+    ) {
       return null;
     }
     const ports = Object.values(parsed.ports);

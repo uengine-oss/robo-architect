@@ -123,10 +123,11 @@ function teardown() {
     // values do not matter for down; set them so compose does not warn about each
     const env = { ...process.env };
     for (const k of ["ROBO_IMAGE_GRAPH_DB", "ROBO_IMAGE_GRAPH_BOLT", "ROBO_IMAGE_FABRIC", "ROBO_IMAGE_FABRIC_DB", "ROBO_IMAGE_CATALOG",
-      "ROBO_IMAGE_ANALYZER", "ROBO_IMAGE_PARSER", "ROBO_IMAGE_GATEWAY", "ROBO_RELEASE_ID", "ROBO_GRAPH_USER", "ROBO_GRAPH_DESIGN",
+      "ROBO_IMAGE_ANALYZER", "ROBO_IMAGE_PARSER", "ROBO_IMAGE_GATEWAY", "ROBO_IMAGE_WIREFRAME", "ROBO_RELEASE_ID", "ROBO_GRAPH_USER", "ROBO_GRAPH_DESIGN",
       "ROBO_GRAPH_ANALYSIS", "ROBO_NEO4J_PASSWORD", "ROBO_AGE_ADMIN_PASSWORD", "ROBO_FABRIC_DB_PASSWORD", "ROBO_FABRIC_QUERY_PASSWORD",
       "ROBO_FABRIC_SERVICE_TOKEN", "ROBO_FABRIC_INTERNAL_TOKEN"]) env[k] ??= "x";
-    for (const k of ["ROBO_NEO4J_PORT", "ROBO_ANALYZER_PORT", "ROBO_GATEWAY_PORT", "ROBO_FABRIC_PORT", "ROBO_ARCHITECT_API_PORT"]) env[k] ??= "1";
+    for (const k of ["ROBO_NEO4J_PORT", "ROBO_ANALYZER_PORT", "ROBO_GATEWAY_PORT", "ROBO_FABRIC_PORT", "ROBO_ARCHITECT_API_PORT",
+      "ROBO_WIREFRAME_PORT"]) env[k] ??= "1";
     sh("docker", ["compose", "--project-name", PROJECT, "--file", compose, "down", "--volumes", "--timeout", "10"], { env });
   } catch (e) {
     console.log("compose down:", String(e.stderr || e.message).slice(0, 300));
@@ -203,13 +204,13 @@ try {
   const ps = docker("compose", "--project-name", PROJECT, "ps", "--all", "--format", "{{.Service}}\t{{.State}}\t{{.Health}}\t{{.Ports}}")
     .split("\n").map((l) => l.split("\t"));
   const services = Object.fromEntries(ps.map(([s, st, h, p]) => [s, { state: st, health: h, ports: p }]));
-  const expected = ["age-db", "age-bolt", "fabric-db", "fabric", "catalog", "analyzer", "parser", "gateway"];
-  check("8 services up and healthy", expected.every((s) => services[s]?.state === "running" && services[s]?.health === "healthy"),
+  const expected = ["age-db", "age-bolt", "fabric-db", "fabric", "catalog", "analyzer", "parser", "gateway", "wireframe"];
+  check("9 services up and healthy (wireframe included)", expected.every((s) => services[s]?.state === "running" && services[s]?.health === "healthy"),
     expected.map((s) => `${s}:${services[s]?.health}`).join(" "));
   const published = ps.map(([s, , , p]) => [s, p]).filter(([, p]) => p && /->/.test(p));
-  check("host ports on 127.0.0.1 only (age-bolt, fabric, analyzer, gateway)",
+  check("host ports on 127.0.0.1 only (age-bolt, fabric, analyzer, gateway, wireframe)",
     published.every(([, p]) => p.split(",").filter((x) => x.includes("->")).every((x) => x.trim().startsWith("127.0.0.1:")))
-      && published.map(([s]) => s).sort().join() === "age-bolt,analyzer,fabric,gateway",
+      && published.map(([s]) => s).sort().join() === "age-bolt,analyzer,fabric,gateway,wireframe",
     published.map(([s, p]) => `${s} ${p}`).join("; "));
   const internal = ["graph", "fabric"].map((n) => docker("network", "inspect", `${PROJECT}_${n}`, "--format", "{{.Internal}}"));
   check("networks graph and fabric are internal", internal.every((x) => x === "true"), internal.join(","));
@@ -422,6 +423,8 @@ try {
   t0 = Date.now();
   const again = await stack.startDockerStack();
   summary.secondBootSeconds = Math.round((Date.now() - t0) / 1000);
+  check("second boot: the saved state is read back — the same host ports",
+    JSON.stringify(again.ports) === JSON.stringify(ports), `${JSON.stringify(ports)} → ${JSON.stringify(again.ports)}`);
   const fabric2 = `http://127.0.0.1:${again.ports.fabric}`;
   const creds = await api("GET", "/api/credentials", null, fabric2);
   const states = Object.fromEntries((creds.json?.credentials ?? []).map((c) => [c.name, c.resolved]));
@@ -450,19 +453,22 @@ try {
   await bolt.close();
 
   // ───────────────────────────────────────────── 10. the default configuration is untouched
-  const mainCompose = "/Users/uengine/robo-architect-lite/desktop/runtime/compose.yml";
-  const sameCompose = fs.readFileSync(mainCompose, "utf8") === fs.readFileSync(path.join(desktop, "runtime/compose.yml"), "utf8");
-  const sameTemplate = fs.readFileSync("/Users/uengine/robo-architect-lite/desktop/runtime/runtime-manifest.template.json", "utf8")
-    === fs.readFileSync(path.join(desktop, "runtime/runtime-manifest.template.json"), "utf8");
+  // the regular release this branch sits on (BASE_REF, default the 0.1.4 release tag)
+  const baseRef = process.env.BASE_REF || "release/lite-0.1.4";
+  const atBase = (file) => sh("git", ["-C", desktop, "show", `${baseRef}:desktop/${file}`]);
+  const sameCompose = atBase("runtime/compose.yml") === fs.readFileSync(path.join(desktop, "runtime/compose.yml"), "utf8").trimEnd();
+  const sameTemplate = atBase("runtime/runtime-manifest.template.json")
+    === fs.readFileSync(path.join(desktop, "runtime/runtime-manifest.template.json"), "utf8").trimEnd();
   const defEnv = { ...process.env };
   for (const k of ["ROBO_IMAGE_GRAPH_DB", "ROBO_IMAGE_GRAPH_BOLT", "ROBO_IMAGE_FABRIC", "ROBO_IMAGE_CATALOG", "ROBO_IMAGE_ANALYZER",
-    "ROBO_IMAGE_PARSER", "ROBO_IMAGE_GATEWAY", "ROBO_RELEASE_ID", "ROBO_GRAPH_USER", "ROBO_GRAPH_DESIGN", "ROBO_GRAPH_ANALYSIS",
-    "ROBO_NEO4J_PASSWORD"]) defEnv[k] = "x";
-  for (const k of ["ROBO_NEO4J_PORT", "ROBO_GRAPH_PG_LOCAL_PORT", "ROBO_ANALYZER_PORT", "ROBO_GATEWAY_PORT", "ROBO_ARCHITECT_API_PORT"]) defEnv[k] = "1";
+    "ROBO_IMAGE_PARSER", "ROBO_IMAGE_GATEWAY", "ROBO_IMAGE_WIREFRAME", "ROBO_RELEASE_ID", "ROBO_GRAPH_USER", "ROBO_GRAPH_DESIGN",
+    "ROBO_GRAPH_ANALYSIS", "ROBO_NEO4J_PASSWORD"]) defEnv[k] = "x";
+  for (const k of ["ROBO_NEO4J_PORT", "ROBO_GRAPH_PG_LOCAL_PORT", "ROBO_ANALYZER_PORT", "ROBO_GATEWAY_PORT", "ROBO_ARCHITECT_API_PORT",
+    "ROBO_WIREFRAME_PORT"]) defEnv[k] = "1";
   const defServices = sh("docker", ["compose", "-p", "ral-agefab-default-check", "-f", path.join(desktop, "runtime/compose.yml"), "config", "--services"], { env: defEnv })
     .split("\n").sort().join(",");
-  check("default compose.yml and manifest template are byte-identical to the main checkout; it resolves to today's 7 services",
-    sameCompose && sameTemplate && defServices === "analyzer,catalog,fabric,gateway,graph-bolt,graph-db,parser", defServices);
+  check(`default compose.yml and manifest template are byte-identical to ${baseRef}; it resolves to its 8 services`,
+    sameCompose && sameTemplate && defServices === "analyzer,catalog,fabric,gateway,graph-bolt,graph-db,parser,wireframe", defServices);
 
   await stack.stopDockerStack();
 } catch (err) {

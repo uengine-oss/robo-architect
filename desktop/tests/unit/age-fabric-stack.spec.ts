@@ -99,9 +99,10 @@ test.describe("runtime variant", () => {
     expect(deployVariantOf("age-fabric")).toBe("age-fabric");
     expect(() => deployVariantOf("neo4j")).toThrow(/deployVariant/);
     expect(requiredImageKeys("ontological")).toEqual([
-      "graphDb", "graphBolt", "analyzer", "catalog", "fabric", "parser", "gateway",
+      "graphDb", "graphBolt", "analyzer", "catalog", "fabric", "parser", "gateway", "wireframe",
     ]);
     expect(requiredImageKeys("age-fabric")).toContain("fabricDb");
+    expect(requiredImageKeys("age-fabric")).toContain("wireframe");
     expect(servicesOf("ontological")).toEqual({ db: "graph-db", bolt: "graph-bolt", fabricDb: null });
     expect(servicesOf("age-fabric")).toEqual({ db: "age-db", bolt: "age-bolt", fabricDb: "fabric-db" });
   });
