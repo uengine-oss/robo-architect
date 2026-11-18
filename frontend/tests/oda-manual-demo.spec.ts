@@ -75,7 +75,7 @@ test('ODA 표준 분해 모드 — 사용 흐름 캡처', async ({ page }) => {
   await page.screenshot({ path: SS(9, 'oda-plan-stage'), fullPage: true })
 
   // 10) Impact Map — 표준 tacticalDiff 로 수렴된 전술 설계(다운스트림 무분기)
-  await page.locator('[data-testid="plan-impact"] > summary').first().click()  // Impact 는 Plan 안의 접힌 섹션
+  await page.locator('.tab-btn', { hasText: 'Impact' }).first().click()
   await page.waitForTimeout(1200)
   await page.screenshot({ path: SS(10, 'oda-impact-converged'), fullPage: true })
 })

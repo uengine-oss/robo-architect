@@ -6,51 +6,23 @@
       <button @click="showCreate = true" class="btn btn--primary btn--sm">{{ t('proposals.panel.newProposal') }}</button>
     </div>
 
-    <!-- 상단 한 줄 = 단계 탭 + 선택한 프로포절의 그 단계 상태 칩(D-1 ⑬).
-         상태 필터는 여기 두지 않는다 — 단계와 같은 어휘를 두 곳에 두면 이중으로 읽힌다. -->
-    <div class="stage-tabs" role="tablist" data-testid="stage-tabs">
+    <!-- Status filter tabs -->
+    <div class="status-tabs">
       <button
-        v-for="s in stageRow"
-        :key="s.key"
-        role="tab"
-        :aria-selected="activeStage === s.key"
-        :disabled="!selectedId || showCreate"
-        :data-stage="s.key"
-        :data-state="selectedId ? s.state : ''"
-        @click="activeStage = s.key"
-        :class="['tab-btn', 'stage-tab', activeStage === s.key && selectedId && !showCreate ? 'tab-btn--active' : '']"
+        v-for="s in statusOptions"
+        :key="s.value"
+        @click="filterStatus = s.value"
+        :class="['status-tab', filterStatus === s.value ? 'status-tab--active' : '']"
       >
-        <span class="stage-tab__label">{{ t(`proposals.stage.${s.key}`) }}</span>
-        <span
-          v-if="selectedId && !showCreate"
-          :class="['stage-chip', `stage-chip--${s.state}`]"
-        >{{ t(`proposals.stage.state.${s.state}`) }}</span>
+        {{ s.label }}
+        <span v-if="s.value" class="count-badge">{{ countByStatus(s.value) }}</span>
       </button>
     </div>
 
     <!-- List + Detail split -->
     <div class="panel-body">
-      <!-- List — 모든 단계 탭에서 같은 목록(좌측 고정) -->
+      <!-- List -->
       <div class="proposal-list">
-        <div class="list-head">
-          <select
-            v-model="filterStatus"
-            class="list-head__status"
-            data-testid="status-filter"
-            :aria-label="t('proposals.panel.statusFilterAria')"
-          >
-            <option v-for="s in statusOptions" :key="s.value" :value="s.value">
-              {{ s.label }} ({{ s.value ? countByStatus(s.value) : store.proposals.length }})
-            </option>
-          </select>
-          <input
-            v-model="searchText"
-            type="search"
-            class="list-head__search"
-            data-testid="proposal-search"
-            :placeholder="t('proposals.panel.searchPlaceholder')"
-          />
-        </div>
         <div v-if="store.loading" class="list-loading">{{ t('proposals.common.loading') }}</div>
         <div v-else-if="!filteredProposals.length" class="list-empty">{{ t('proposals.panel.empty') }}</div>
         <div
@@ -99,7 +71,6 @@
         <ProposalDetail
           v-else-if="selectedId"
           :proposalId="selectedId"
-          v-model:stage="activeStage"
         />
         <div v-else class="detail-empty">
           {{ t('proposals.panel.selectHint') }}
@@ -155,7 +126,6 @@
 import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useProposalsStore } from '../proposals.store'
 import { deleteConfirmMatches, normalizeDeleteConfirm } from '../delete-confirm'
-import { stageTabs, filterProposals } from '../proposal-stages'
 import { useI18n } from '../../../app/i18n'
 import ProposalDetail from './ProposalDetail.vue'
 import ProposalCreate from './ProposalCreate.vue'
@@ -165,9 +135,6 @@ const { t } = useI18n()
 
 const store = useProposalsStore()
 const filterStatus = ref('')
-const searchText = ref('')
-// 단계 탭은 목록 위 한 줄에 있다 — 다른 프로포절을 골라도 보던 단계에 머문다.
-const activeStage = ref('intent')
 const selectedId = ref(null)
 const showCreate = ref(false)
 
@@ -251,21 +218,10 @@ const statusOptions = computed(() => [
 ])
 
 const filteredProposals = computed(() =>
-  filterProposals(store.proposals, { status: filterStatus.value, query: searchText.value }))
-
-// 상단 단계 탭 — 선택한 프로포절의 상태로 칩을 매긴다(목록 클릭 직후 상세가 오기 전엔
-// 목록의 상태로 먼저 그린다).
-const selectedProposal = computed(() => {
-  const cur = store.currentProposal
-  if (cur && cur.id === selectedId.value) return cur
-  return store.proposals.find(p => p.id === selectedId.value) || null
-})
-const stageRow = computed(() => {
-  const p = selectedProposal.value
-  return stageTabs(p?.status, {
-    canImplement: !!p?.implementationPlan && !p?.planStale,
-  })
-})
+  filterStatus.value
+    ? store.proposals.filter(p => p.status === filterStatus.value)
+    : store.proposals
+)
 
 function countByStatus(status) {
   return store.proposals.filter(p => p.status === status).length
@@ -349,17 +305,10 @@ onUnmounted(() => { if (_pollTimer) clearInterval(_pollTimer) })
 .btn { padding: 5px 12px; border-radius: 4px; border: none; cursor: pointer; font-size: 12px; }
 .btn--primary { background: var(--color-accent); color: #fff; }
 .btn--sm { padding: 4px 10px; }
-.stage-tabs { display: flex; overflow-x: auto; padding: 0 14px; gap: 2px; border-bottom: 2px solid var(--color-border); }
-.tab-btn { background: none; border: none; padding: 8px 12px; font-size: 13px; cursor: pointer; color: var(--color-text-light); border-bottom: 2px solid transparent; margin-bottom: -2px; white-space: nowrap; display: flex; align-items: center; gap: 6px; }
-.tab-btn:disabled { cursor: default; opacity: 0.55; }
-.tab-btn--active { color: var(--color-accent); border-bottom-color: var(--color-accent); font-weight: 600; }
-.stage-chip { font-size: 10px; font-weight: 600; padding: 0 6px; border-radius: 9999px; line-height: 1.6; }
-.stage-chip--done { background: var(--status-green-bg); color: var(--status-green-fg); }
-.stage-chip--active { background: var(--status-blue-bg); color: var(--status-blue-fg); }
-.stage-chip--ready { background: var(--status-amber-bg); color: var(--status-amber-fg); }
-.stage-chip--locked { background: var(--status-neutral-bg); color: var(--status-neutral-fg); }
-.list-head { position: sticky; top: 0; z-index: 1; display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--color-border); background: var(--color-bg, #fff); }
-.list-head__status, .list-head__search { width: 100%; box-sizing: border-box; padding: 4px 8px; font-size: 12px; border: 1px solid var(--color-border); border-radius: 4px; background: var(--color-bg-secondary); color: var(--color-text); }
+.status-tabs { display: flex; overflow-x: auto; padding: 6px 14px; gap: 4px; border-bottom: 1px solid var(--color-border); }
+.status-tab { background: none; border: 1px solid transparent; border-radius: 14px; padding: 3px 10px; font-size: 11px; cursor: pointer; color: var(--color-text-light); white-space: nowrap; display: flex; align-items: center; gap: 4px; }
+.status-tab--active { background: var(--status-blue-bg); color: var(--status-blue-fg); border-color: transparent; }
+.count-badge { background: var(--status-neutral-bg); color: var(--status-neutral-fg); border-radius: 9999px; padding: 0 5px; font-size: 10px; }
 .panel-body { display: flex; flex: 1; overflow: hidden; }
 .proposal-list { width: 280px; min-width: 220px; overflow-y: auto; border-right: 1px solid var(--color-border); }
 .list-loading, .list-empty { color: var(--color-text-light); padding: 16px; font-size: 12px; }
