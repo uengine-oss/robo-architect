@@ -145,8 +145,11 @@ def test_막힌_갈래가_이제_없다(monkeypatch):
     # open-pencil 은 백엔드 프록시를 지난다 — 브라우저에 키가 가지 않는다.
     assert paths[gw.PATH_OPEN_PENCIL]["status"] == "routed"
     assert "프록시" in paths[gw.PATH_OPEN_PENCIL]["note"]
-    # Claude Code 는 **안 쓰는 갈래**다. "못 옮김" 과 갈라 적는다.
-    assert paths[gw.PATH_CLAUDE_PTY]["status"] == "not-shipped"
+    # Claude Code 는 Anthropic 직결이다. "못 옮김" 과 갈라 적는다 — 서버 판은 쓰지 않고
+    # (화면 빌드가 감춘다), lite 는 쓴다. 그래서 있나 없나는 서버가 정하지 않는다.
+    assert paths[gw.PATH_CLAUDE_PTY]["status"] == "direct"
+    assert paths[gw.PATH_CLAUDE_PTY]["shipped"] is None
+    assert paths[gw.PATH_PDF2BPMN]["shipped"] is True
     # 분석기는 우리 프로세스가 아니다 — 코드가 아니라 설정 파일로 옮긴다.
     assert paths[gw.PATH_ANALYZER]["status"] == "config-only"
     assert "ROBO_LLM_CONFIG" in paths[gw.PATH_ANALYZER]["note"]
@@ -198,3 +201,16 @@ def test_호출_시점_인자가_설정보다_세다(monkeypatch):
     llm = get_llm(model="gpt-4.1", base_url="http://other.internal/v1")
     assert str(llm.openai_api_base).rstrip("/") == "http://other.internal/v1"
     assert llm.model_name == "gpt-4.1"
+
+
+def test_pdf2bpmn_주소가_없으면_이_배포에_없는_갈래다(monkeypatch):
+    """포스코 웹 판은 11-11 에 compose 에서 pdf2bpmn 을 뺐다. 그런데도 화면은
+    "이 PC 안 컨테이너가 돈다" 고 적었다(11-18). 주소가 없으면 shipped=False 로 감춘다."""
+    monkeypatch.delenv("PDF2BPMN_FACADE_URL", raising=False)
+    paths = {p["id"]: p for p in gw.describe()["paths"]}
+    assert paths[gw.PATH_PDF2BPMN]["shipped"] is False
+
+
+def test_모든_갈래가_shipped_를_적는다():
+    for p in gw.describe()["paths"]:
+        assert "shipped" in p, p["id"]

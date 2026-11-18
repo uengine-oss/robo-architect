@@ -141,13 +141,21 @@ def _overridden_keys() -> list[str]:
 def describe() -> dict[str, Any]:
     """여섯 갈래가 지금 어디를 보는가. **비밀값은 담지 않는다.**
 
-    ``status`` 는 셋뿐이다.
+    ``status``:
 
         routed       이 설정으로 게이트웨이를 본다
         default      P-GPT 가 꺼져 있다 — 기존 OPENAI_* 로 간다
         config-only  우리 코드가 아니라 그쪽 설정 파일로 옮긴다
-        not-shipped  **이 배포에 그 기능이 없다** — 옮길 것도 없다
+        direct       게이트웨이를 지나지 않고 공급자에 바로 간다(Claude Code → Anthropic)
         unroutable   이 키로는 안 움직인다 — 납품 항목
+
+    ``shipped`` — 이 배포에 그 갈래가 있나. ``False`` 면 화면이 그 줄을 감춘다.
+    ``None`` 은 서버가 모른다는 뜻이다(Claude Code 는 **화면 빌드**가 정한다 —
+    서버 판 web 은 VITE_DISABLE_CLAUDE_TERMINAL=1 로 굽고, lite 는 쓴다).
+    2026-11-18: 예전엔 Claude Code 를 늘 "안 씀" 으로 적었는데 lite 에서는 틀린 말이었고,
+    pdf2bpmn 은 포스코 웹 판 compose 에서 빠졌는데도(11-11) "이 PC 안 컨테이너가 돈다" 고 적었다.
+
+    ``note`` 는 **운영자용 설명**이다(환경변수 이름 등). 화면은 "자세히" 안에만 둔다.
 
     ⚠ `blocked` 는 `unroutable` 만 센다. "안 쓰는 기능" 을 막힌 것으로 세면
       납품 점검에서 **고칠 수 없는 항목이 영영 남아 있는 것처럼** 보인다.
@@ -162,6 +170,7 @@ def describe() -> dict[str, Any]:
         {
             "id": PATH_ARCHITECT,
             "label": "Architect 백엔드",
+            "shipped": True,
             "status": "routed" if on else "default",
             "target": base_url() or emb_state["chatBaseUrl"] or "openai",
             "note": None if on else "PGPT_BASE_URL 미설정 — 기존 OPENAI_* 를 그대로 쓴다",
@@ -169,6 +178,7 @@ def describe() -> dict[str, Any]:
         {
             "id": PATH_EMBEDDINGS,
             "label": "임베딩",
+            "shipped": True,
             "status": "routed" if emb_over else "default",
             "target": emb_state["baseUrl"],
             # 채팅만 옮기고 임베딩을 잊은 상태. 게이트웨이가 임베딩을 안 주면
@@ -183,6 +193,7 @@ def describe() -> dict[str, Any]:
         {
             "id": PATH_ANALYZER,
             "label": "분석기 스택",
+            "shipped": True,
             "status": "config-only",
             "target": None,
             "note": (
@@ -197,15 +208,17 @@ def describe() -> dict[str, Any]:
             # 그 안의 추출기도 이제 같은 손잡이를 따라간다(compose 가 PGPT_* 를
             # 넘기고 `facade.py` 가 값이 있을 때만 바꾼다).
             "status": "routed" if on else "default",
+            # 주소가 없으면 이 배포에 pdf2bpmn 이 없다(포스코 웹 판은 11-11 에 compose 에서 뺐다).
+            "shipped": bool(env_str("PDF2BPMN_FACADE_URL", default=None)),
             "target": env_str("PDF2BPMN_FACADE_URL", default=None),
             "note": (
                 # 이 프로세스는 컨테이너 안의 값을 **직접 읽지 못한다.** 같은 호스트
                 # 환경을 compose 가 넘긴다는 사실로 말하는 것이라고 밝혀 둔다.
-                "이 PC 안 컨테이너가 돈다. 그 안의 추출기도 같은 호스트의 "
+                "같은 호스트의 컨테이너가 돈다. 그 안의 추출기도 같은 호스트의 "
                 "PGPT_BASE_URL 을 따라간다(compose 가 넘긴다) — 컨테이너 안의 값을 "
                 "여기서 직접 읽지는 못한다."
                 if on
-                else "이 PC 안 컨테이너가 돈다. 다만 그 안의 추출기는 지금 "
+                else "같은 호스트의 컨테이너가 돈다. 다만 그 안의 추출기는 지금 "
                      "OpenAI 로 직접 나간다 — PGPT_BASE_URL · PGPT_API_KEY 를 "
                      "지정하면 함께 옮겨진다."
             ),
@@ -216,15 +229,16 @@ def describe() -> dict[str, Any]:
             # 2026-09-29 에 **탭에서 뺐다**(`TopBar.vue` 의 `tabs`). 사내망에는
             # `claude` CLI 가 없어서 열어 두면 눌러도 아무 일이 안 난다.
             # 쓰지 않는 갈래를 "못 옮김" 으로 세면 점검표가 영영 안 닫힌다.
-            "status": "not-shipped",
+            "status": "direct",
+            "shipped": None,  # 화면 빌드가 정한다(VITE_DISABLE_CLAUDE_TERMINAL)
             "target": "anthropic",
-            "note": ("이 배포는 Code · Proposals 탭을 뺐다 — 쓰지 않는 갈래다. "
-                     "되살리면 `claude` CLI 가 Anthropic 에 직결하므로 OpenAI "
-                     "호환 게이트웨이로는 못 보낸다."),
+            "note": ("`claude` CLI 가 Anthropic 에 직결한다 — OpenAI 호환 게이트웨이로는 "
+                     "못 보낸다. 서버 판(웹)은 Code · Proposals 를 감춰 이 갈래를 쓰지 않는다."),
         },
         {
             "id": PATH_OPEN_PENCIL,
             "label": "open-pencil AIChat",
+            "shipped": True,
             # 2026-10-27 정정: **밖으로 직접 나가지 않는다.**
             # `frontend/src/features/aiDesign/bootstrap.js` 가 open-pencil 의
             # localStorage 설정을 **우리 프록시**(`/api/ai-design/v1`)로 맞추고,
