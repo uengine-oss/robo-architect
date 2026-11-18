@@ -6,23 +6,51 @@
       <button @click="showCreate = true" class="btn btn--primary btn--sm">{{ t('proposals.panel.newProposal') }}</button>
     </div>
 
-    <!-- Status filter tabs -->
-    <div class="status-tabs">
+    <!-- 상단 한 줄 = 단계 탭 + 선택한 프로포절의 그 단계 상태 칩(D-1 ⑬).
+         상태 필터는 여기 두지 않는다 — 단계와 같은 어휘를 두 곳에 두면 이중으로 읽힌다. -->
+    <div class="stage-tabs" role="tablist" data-testid="stage-tabs">
       <button
-        v-for="s in statusOptions"
-        :key="s.value"
-        @click="filterStatus = s.value"
-        :class="['status-tab', filterStatus === s.value ? 'status-tab--active' : '']"
+        v-for="s in stageRow"
+        :key="s.key"
+        role="tab"
+        :aria-selected="activeStage === s.key"
+        :disabled="!selectedId || showCreate"
+        :data-stage="s.key"
+        :data-state="selectedId ? s.state : ''"
+        @click="activeStage = s.key"
+        :class="['tab-btn', 'stage-tab', activeStage === s.key && selectedId && !showCreate ? 'tab-btn--active' : '']"
       >
-        {{ s.label }}
-        <span v-if="s.value" class="count-badge">{{ countByStatus(s.value) }}</span>
+        <span class="stage-tab__label">{{ t(`proposals.stage.${s.key}`) }}</span>
+        <span
+          v-if="selectedId && !showCreate"
+          :class="['stage-chip', `stage-chip--${s.state}`]"
+        >{{ t(`proposals.stage.state.${s.state}`) }}</span>
       </button>
     </div>
 
     <!-- List + Detail split -->
     <div class="panel-body">
-      <!-- List -->
+      <!-- List — 모든 단계 탭에서 같은 목록(좌측 고정) -->
       <div class="proposal-list">
+        <div class="list-head">
+          <select
+            v-model="filterStatus"
+            class="list-head__status"
+            data-testid="status-filter"
+            :aria-label="t('proposals.panel.statusFilterAria')"
+          >
+            <option v-for="s in statusOptions" :key="s.value" :value="s.value">
+              {{ s.label }} ({{ s.value ? countByStatus(s.value) : store.proposals.length }})
+            </option>
+          </select>
+          <input
+            v-model="searchText"
+            type="search"
+            class="list-head__search"
+            data-testid="proposal-search"
+            :placeholder="t('proposals.panel.searchPlaceholder')"
+          />
+        </div>
         <div v-if="store.loading" class="list-loading">{{ t('proposals.common.loading') }}</div>
         <div v-else-if="!filteredProposals.length" class="list-empty">{{ t('proposals.panel.empty') }}</div>
         <div
@@ -71,6 +99,7 @@
         <ProposalDetail
           v-else-if="selectedId"
           :proposalId="selectedId"
+          v-model:stage="activeStage"
         />
         <div v-else class="detail-empty">
           {{ t('proposals.panel.selectHint') }}
@@ -83,19 +112,37 @@
       <div class="dialog">
         <h4>{{ t('proposals.panel.deleteConfirmTitle') }}</h4>
         <p class="dialog__note">{{ t('proposals.panel.deleteConfirmNote', { id: deleteTarget.id }) }}</p>
+        <!-- id + 복사 단추 — 복사·붙여넣기가 정상 경로가 되게 -->
+        <div class="dialog__id-row">
+          <code class="dialog__id" data-testid="delete-target-id">{{ deleteTarget.id }}</code>
+          <button
+            type="button"
+            class="btn btn--secondary btn--sm"
+            data-testid="delete-copy-id"
+            @click="copyDeleteId"
+          >{{ idCopied ? t('proposals.panel.deleteIdCopied') : t('proposals.panel.deleteCopyId') }}</button>
+        </div>
+        <!-- autofocus 는 동적으로 꽂히는 모달 입력엔 듣지 않는다(재 보니 focus 가 🗑 단추에
+             남는다) → ref + nextTick 으로 실제 focus. v-model 대신 DOM 값을 그대로 받는다 —
+             IME 조합 중에도 값이 따라오고, 조합이 끝날 때(compositionend) 한 번 더 맞춘다. -->
         <input
-          v-model="deleteConfirmText"
+          ref="deleteInputEl"
+          :value="deleteConfirmText"
           class="dialog__input"
+          data-testid="delete-confirm-input"
           :placeholder="t('proposals.panel.deleteInputPlaceholder')"
-          autofocus
-          @keyup.enter="deleteConfirmText === deleteTarget.id && confirmDelete()"
+          @input="syncDeleteConfirm"
+          @compositionend="syncDeleteConfirm"
+          @keyup.enter="deleteMatches && confirmDelete()"
+          @keydown.esc="cancelDelete"
         />
         <p v-if="deleteError" class="error-msg">{{ deleteError }}</p>
         <div class="dialog__actions">
           <button @click="cancelDelete" class="btn btn--secondary" :disabled="deleting">{{ t('proposals.common.cancel') }}</button>
           <button
             @click="confirmDelete"
-            :disabled="deleting || deleteConfirmText !== deleteTarget.id"
+            :disabled="deleting || !deleteMatches"
+            data-testid="delete-confirm-btn"
             class="btn btn--danger"
           >{{ deleting ? t('proposals.panel.deleting') : t('proposals.panel.deleteConfirm') }}</button>
         </div>
@@ -105,8 +152,10 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useProposalsStore } from '../proposals.store'
+import { deleteConfirmMatches, normalizeDeleteConfirm } from '../delete-confirm'
+import { stageTabs, filterProposals } from '../proposal-stages'
 import { useI18n } from '../../../app/i18n'
 import ProposalDetail from './ProposalDetail.vue'
 import ProposalCreate from './ProposalCreate.vue'
@@ -116,6 +165,9 @@ const { t } = useI18n()
 
 const store = useProposalsStore()
 const filterStatus = ref('')
+const searchText = ref('')
+// 단계 탭은 목록 위 한 줄에 있다 — 다른 프로포절을 골라도 보던 단계에 머문다.
+const activeStage = ref('intent')
 const selectedId = ref(null)
 const showCreate = ref(false)
 
@@ -124,11 +176,37 @@ const deleteTarget = ref(null)
 const deleteConfirmText = ref('')
 const deleting = ref(false)
 const deleteError = ref(null)
+const deleteInputEl = ref(null)
+const idCopied = ref(false)
 
-function askDelete(p) {
+const deleteMatches = computed(() =>
+  !!deleteTarget.value && deleteConfirmMatches(deleteConfirmText.value, deleteTarget.value.id))
+
+function syncDeleteConfirm(event) {
+  deleteConfirmText.value = event?.target?.value ?? ''
+}
+
+async function askDelete(p) {
   deleteTarget.value = p
   deleteConfirmText.value = ''
   deleteError.value = null
+  idCopied.value = false
+  await nextTick()
+  deleteInputEl.value?.focus()
+}
+
+async function copyDeleteId() {
+  const id = deleteTarget.value?.id
+  if (!id) return
+  try {
+    await navigator.clipboard.writeText(id)
+    idCopied.value = true
+  } catch {
+    // 클립보드 권한이 없으면 id 를 선택해 둔다 — 사용자가 Ctrl+C 로 이어 간다.
+    const el = document.querySelector('[data-testid="delete-target-id"]')
+    if (el) window.getSelection()?.selectAllChildren(el)
+  }
+  deleteInputEl.value?.focus()
 }
 
 function cancelDelete() {
@@ -139,12 +217,12 @@ function cancelDelete() {
 }
 
 async function confirmDelete() {
-  if (!deleteTarget.value || deleteConfirmText.value !== deleteTarget.value.id) return
+  if (!deleteMatches.value) return
   deleting.value = true
   deleteError.value = null
   try {
     const id = deleteTarget.value.id
-    await store.deleteProposal(id, deleteConfirmText.value)
+    await store.deleteProposal(id, normalizeDeleteConfirm(deleteConfirmText.value))
     if (selectedId.value === id) selectedId.value = null
     deleteTarget.value = null
     deleteConfirmText.value = ''
@@ -173,10 +251,21 @@ const statusOptions = computed(() => [
 ])
 
 const filteredProposals = computed(() =>
-  filterStatus.value
-    ? store.proposals.filter(p => p.status === filterStatus.value)
-    : store.proposals
-)
+  filterProposals(store.proposals, { status: filterStatus.value, query: searchText.value }))
+
+// 상단 단계 탭 — 선택한 프로포절의 상태로 칩을 매긴다(목록 클릭 직후 상세가 오기 전엔
+// 목록의 상태로 먼저 그린다).
+const selectedProposal = computed(() => {
+  const cur = store.currentProposal
+  if (cur && cur.id === selectedId.value) return cur
+  return store.proposals.find(p => p.id === selectedId.value) || null
+})
+const stageRow = computed(() => {
+  const p = selectedProposal.value
+  return stageTabs(p?.status, {
+    canImplement: !!p?.implementationPlan && !p?.planStale,
+  })
+})
 
 function countByStatus(status) {
   return store.proposals.filter(p => p.status === status).length
@@ -260,10 +349,17 @@ onUnmounted(() => { if (_pollTimer) clearInterval(_pollTimer) })
 .btn { padding: 5px 12px; border-radius: 4px; border: none; cursor: pointer; font-size: 12px; }
 .btn--primary { background: var(--color-accent); color: #fff; }
 .btn--sm { padding: 4px 10px; }
-.status-tabs { display: flex; overflow-x: auto; padding: 6px 14px; gap: 4px; border-bottom: 1px solid var(--color-border); }
-.status-tab { background: none; border: 1px solid transparent; border-radius: 14px; padding: 3px 10px; font-size: 11px; cursor: pointer; color: var(--color-text-light); white-space: nowrap; display: flex; align-items: center; gap: 4px; }
-.status-tab--active { background: var(--status-blue-bg); color: var(--status-blue-fg); border-color: transparent; }
-.count-badge { background: var(--status-neutral-bg); color: var(--status-neutral-fg); border-radius: 9999px; padding: 0 5px; font-size: 10px; }
+.stage-tabs { display: flex; overflow-x: auto; padding: 0 14px; gap: 2px; border-bottom: 2px solid var(--color-border); }
+.tab-btn { background: none; border: none; padding: 8px 12px; font-size: 13px; cursor: pointer; color: var(--color-text-light); border-bottom: 2px solid transparent; margin-bottom: -2px; white-space: nowrap; display: flex; align-items: center; gap: 6px; }
+.tab-btn:disabled { cursor: default; opacity: 0.55; }
+.tab-btn--active { color: var(--color-accent); border-bottom-color: var(--color-accent); font-weight: 600; }
+.stage-chip { font-size: 10px; font-weight: 600; padding: 0 6px; border-radius: 9999px; line-height: 1.6; }
+.stage-chip--done { background: var(--status-green-bg); color: var(--status-green-fg); }
+.stage-chip--active { background: var(--status-blue-bg); color: var(--status-blue-fg); }
+.stage-chip--ready { background: var(--status-amber-bg); color: var(--status-amber-fg); }
+.stage-chip--locked { background: var(--status-neutral-bg); color: var(--status-neutral-fg); }
+.list-head { position: sticky; top: 0; z-index: 1; display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--color-border); background: var(--color-bg, #fff); }
+.list-head__status, .list-head__search { width: 100%; box-sizing: border-box; padding: 4px 8px; font-size: 12px; border: 1px solid var(--color-border); border-radius: 4px; background: var(--color-bg-secondary); color: var(--color-text); }
 .panel-body { display: flex; flex: 1; overflow: hidden; }
 .proposal-list { width: 280px; min-width: 220px; overflow-y: auto; border-right: 1px solid var(--color-border); }
 .list-loading, .list-empty { color: var(--color-text-light); padding: 16px; font-size: 12px; }
@@ -299,6 +395,8 @@ onUnmounted(() => { if (_pollTimer) clearInterval(_pollTimer) })
 .dialog h4 { margin: 0 0 8px; font-size: 14px; color: var(--color-text-bright); }
 .dialog__note { font-size: 12px; color: var(--color-text-light); margin: 0 0 12px; line-height: 1.5; }
 .dialog__input { width: 100%; box-sizing: border-box; padding: 7px 10px; border: 1px solid var(--color-border); border-radius: 4px; font-family: monospace; font-size: 12px; background: var(--color-bg-secondary); color: var(--color-text-bright); }
+.dialog__id-row { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; }
+.dialog__id { flex: 1; font-family: monospace; font-size: 12px; padding: 4px 8px; border-radius: 4px; background: var(--color-bg-tertiary, var(--color-bg-secondary)); color: var(--color-text-bright); user-select: all; }
 .dialog__actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 .btn--secondary { background: var(--color-bg-secondary); color: var(--color-text); border: 1px solid var(--color-border); }
 .btn--danger { background: var(--color-danger, #c0392b); color: #fff; }

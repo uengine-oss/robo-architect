@@ -85,7 +85,7 @@ async function openSandbox(page: Page) {
   const item = page.locator('.proposal-item', { hasText: PROPOSAL_ID }).first()
   await expect(item).toBeVisible({ timeout: 15000 })
   await item.click()
-  await page.locator('.tab-btn', { hasText: '샌드박스 구현' }).click()
+  await page.locator('.tab-btn', { hasText: 'Sandbox' }).click()
   const btn = page.getByRole('button', { name: '구현하기', exact: true })
   await expect(btn).toBeVisible({ timeout: 10000 })
   return btn
