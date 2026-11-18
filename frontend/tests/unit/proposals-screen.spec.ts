@@ -146,3 +146,33 @@ test.describe('A-2 삭제 확인 입력', () => {
     await expect(page.getByTestId('delete-confirm-btn')).toBeEnabled()
   })
 })
+
+test.describe('⑬ 단계 탭 집계 — 진행중 + 지난 단계', () => {
+  test('Intent 탭에 완료된 것도 남고 배지는 합, 지난 것엔 "지남" 표시', async ({ page }) => {
+    await mockApi(page, [
+      proposal('PRO-001', 'DRAFT'),
+      proposal('PRO-002', 'ACCEPTED'),
+      proposal('PRO-003', 'SUBMITTED'),
+      proposal('PRO-004', 'DESTROYED'),
+    ])
+    await open(page)
+    await expect(page.getByTestId('stage-count-DRAFT')).toHaveText('3')
+    await expect(page.getByTestId('stage-count-SUBMITTED')).toHaveText('2')
+    await expect(page.getByTestId('stage-count-ACCEPTED')).toHaveText('1')
+    await expect(page.getByTestId('stage-count-DESTROYED')).toHaveText('1')
+    await expect(page.getByTestId('stage-count-DRAFT')).toHaveAttribute('title', /1 · .*2/)
+
+    await page.locator('.status-tab', { hasText: 'INTENT' }).click()
+    const items = page.locator('.proposal-item .proposal-item__id')
+    await expect(items).toHaveText(['PRO-001', 'PRO-002', 'PRO-003'])  // 진행중(001) 먼저, 지난 것(002·003)은 원래 순서
+    await expect(page.getByTestId('stage-passed-chip')).toHaveCount(2)
+  })
+
+  test('프로포절 안의 탭은 기존 그대로(Intent → Plan → Impact)', async ({ page }) => {
+    await mockApi(page, [proposal('PRO-001', 'DRAFT')])
+    await open(page)
+    await page.locator('.proposal-item').first().click()
+    await expect(page.locator('.detail-tabs .tab-btn')).toHaveCount(3)
+    await expect(page.locator('.detail-tabs')).toBeVisible()
+  })
+})

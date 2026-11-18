@@ -15,7 +15,12 @@
         :class="['status-tab', filterStatus === s.value ? 'status-tab--active' : '']"
       >
         {{ s.label }}
-        <span v-if="s.value" class="count-badge">{{ countByStatus(s.value) }}</span>
+        <span
+          v-if="s.value"
+          class="count-badge"
+          :data-testid="`stage-count-${s.value}`"
+          :title="stageCountTitle(s.value)"
+        >{{ countByStatus(s.value) }}</span>
       </button>
     </div>
 
@@ -36,6 +41,11 @@
             <span :class="['status-badge', `status-badge--${p.status.toLowerCase()}`]">
               {{ statusLabel(p.status) }}
             </span>
+            <span
+              v-if="stagePhase(filterStatus, p.status) === 'passed'"
+              class="stage-passed-chip"
+              data-testid="stage-passed-chip"
+            >{{ t('proposals.panel.stagePassed') }}</span>
             <button
               class="proposal-item__delete"
               :title="t('proposals.panel.deleteTitle')"
@@ -126,6 +136,7 @@
 import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useProposalsStore } from '../proposals.store'
 import { deleteConfirmMatches, normalizeDeleteConfirm } from '../delete-confirm'
+import { filterForStageTab, countForStageTab, stagePhase } from '../stageFilter'
 import { useI18n } from '../../../app/i18n'
 import ProposalDetail from './ProposalDetail.vue'
 import ProposalCreate from './ProposalCreate.vue'
@@ -217,14 +228,17 @@ const statusOptions = computed(() => [
   { value: 'DESTROYED', label: 'DESTROYED' },
 ])
 
-const filteredProposals = computed(() =>
-  filterStatus.value
-    ? store.proposals.filter(p => p.status === filterStatus.value)
-    : store.proposals
-)
+// 단계 탭 = 그 단계에 있는 것(진행중) + 그 단계를 지난 것(완료). 완료돼도 앞 단계 탭에 남는다(lite ⑬).
+const filteredProposals = computed(() => filterForStageTab(store.proposals, filterStatus.value))
 
 function countByStatus(status) {
-  return store.proposals.filter(p => p.status === status).length
+  return countForStageTab(store.proposals, status).total
+}
+
+function stageCountTitle(status) {
+  const c = countForStageTab(store.proposals, status)
+  if (status === 'DESTROYED' || status === 'ACCEPTED') return ''
+  return t('proposals.panel.stageCountTitle', { current: c.current, passed: c.passed })
 }
 
 function isActive(status) {
@@ -351,4 +365,11 @@ onUnmounted(() => { if (_pollTimer) clearInterval(_pollTimer) })
 .btn--danger { background: var(--color-danger, #c0392b); color: #fff; }
 .btn--danger:disabled { opacity: 0.5; cursor: not-allowed; }
 .error-msg { color: var(--status-red-fg, #c0392b); font-size: 12px; margin: 8px 0 0; }
+.stage-passed-chip {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border, #d0d7de);
+  color: var(--color-text-light, #6e7781);
+}
 </style>

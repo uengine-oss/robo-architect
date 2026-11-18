@@ -34,6 +34,8 @@ export const messages = {
   'proposals.panel.activityDone': { ko: '완료', en: 'Done' },
   'proposals.panel.activityRunning': { ko: '진행 중', en: 'Running' },
   'proposals.panel.statusAll': { ko: '전체', en: 'All' },
+  'proposals.panel.stageCountTitle': { ko: '진행중 {current} · 지난 단계 {passed}', en: 'In this stage {current} · Past it {passed}' },
+  'proposals.panel.stagePassed': { ko: '지남', en: 'Past' },
   'proposals.panel.statusDraft': { ko: 'INTENT', en: 'INTENT' },
   'proposals.panel.statusSubmitted': { ko: 'PLAN', en: 'PLAN' },
   'proposals.panel.statusTesting': { ko: 'VALIDATING', en: 'VALIDATING' },
