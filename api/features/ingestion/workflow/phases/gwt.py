@@ -27,6 +27,7 @@ from api.platform.env import (
 from api.platform.observability.request_logging import summarize_for_log
 from api.features.ingestion.event_storming.neo4j_client import retry_on_transient
 from api.platform.observability.smart_logger import SmartLogger
+from api.features.ingestion.workflow.utils.llm_json import loads_llm_json
 
 
 # ── Structured-output schema for the command-GWT recovery retry ──────────────
@@ -567,23 +568,17 @@ If no properties are available, only then use empty fieldValues {{}}."""
         # 3. 이스케이프된 control character 제거 (\x00-\x1F 형태)
         content = re.sub(r'\\x0[0-8a-f]|\\x1[0-9a-ce-f]', '', content)
         
-        # Remove single-line comments (// ...)
-        content = re.sub(r'//.*?$', '', content, flags=re.MULTILINE)
-        # Remove multi-line comments (/* ... */)
-        content = re.sub(r'/\*.*?\*/', '', content, flags=re.DOTALL)
-        # Remove trailing commas before closing braces/brackets
-        content = re.sub(r',(\s*[}\]])', r'\1', content)
-        
+        # 주석·꼬리 쉼표는 **문자열 밖에서만** 지운다(loads_llm_json). 예전 정규식은
+        # 문자열 안의 `//`(URL 등)까지 지워 닫는 따옴표를 날렸고, 그 Command 의 GWT 가
+        # 통째로 저장되지 않았다(2026-11-18 ES 생성 7건 "Expecting ',' delimiter").
         try:
-            # strict=False: tolerate literal control chars (newline/tab) inside
-            # string values. The cleanup above keeps \n\r\t for structural
-            # readability, but the LLM also embeds them unescaped inside
-            # description strings — strict json.loads rejects those
-            # ("Invalid control character"). strict=False keeps them as-is.
-            gwt_test_cases = json.loads(content, strict=False)
+            # strict=False: 문자열 안의 날 줄바꿈·탭을 받는다(LLM 이 description 에 넣는다).
+            gwt_test_cases = loads_llm_json(content)
         except json.JSONDecodeError as json_err:
+            # 사용자에게 "저장 실패" 로 보이는 일이라 ERROR 로 남긴다 — 운영 기본값(ERROR 이상)
+            # 에서 WARN 은 버려져, 무엇이 깨졌는지 볼 수 없었다.
             SmartLogger.log(
-                "WARN",
+                "ERROR",
                 f"Command GWT JSON parse error for {cmd_name}: {json_err}. Content preview: {content[:500]}",
                 category="ingestion.workflow.gwt.command.json_parse_error",
                 params={
