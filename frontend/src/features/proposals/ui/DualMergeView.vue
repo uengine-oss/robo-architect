@@ -59,6 +59,8 @@
       <p>{{ t('proposals.dualMerge.acceptedAt', { date: formatDate(proposal.acceptedAt) }) }}</p>
       <p class="accepted__note">{{ hasFailures ? t('proposals.dualMerge.acceptedNoteForced') : t('proposals.dualMerge.acceptedNote') }}</p>
       <button @click="showRevokeConfirm = true" class="btn btn--revoke">{{ t('proposals.dualMerge.revokeBtn') }}</button>
+      <!-- D-5 ⑰ ① Accept 로 생긴 UI 에 와이어프레임 생성(단추 — 자동 아님) -->
+      <ProposalUiWireframes :proposalId="proposal.id" />
     </div>
 
     <!-- DESTROYED 상태 -->
@@ -113,6 +115,7 @@
 import { ref, computed } from 'vue'
 import { useProposalsStore } from '../proposals.store'
 import { useI18n } from '../../../app/i18n'
+import ProposalUiWireframes from './ProposalUiWireframes.vue'
 
 const props = defineProps({ proposal: { type: Object, required: true } })
 const store = useProposalsStore()

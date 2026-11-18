@@ -28,3 +28,4 @@ UserStory(userStoryRefs 첫 항목)를 `UI.userStoryId`로 추적 연결한다.
 ## 자가 검증
 - [ ] 각 Aggregate가 핵심 불변식을 가졌고, 검증 Command(verifyingCommandRefs)에 연결됐다.
 - [ ] 사용자 접점 Command/ReadModel이 UI를 가졌다.
+- [ ] 각 UI 의 `name`·`description` 이 **화면 생성이 가능한 수준**이다 — 무슨 화면인지(입력 폼/목록/상세), 주요 입력·표시 항목, 주요 동작이 드러난다("메뉴 화면" 같은 이름만으로는 부족하다). `template` 은 선택 그대로 둔다 — 와이어프레임은 Accept 뒤 생성기가 이 이름·설명으로 만든다.

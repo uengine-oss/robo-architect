@@ -496,6 +496,36 @@ export const useProposalsStore = defineStore('proposals', () => {
     }
   }
 
+  // D-5 ⑰ — Accept 로 생긴 UI 의 와이어프레임. 목록 + 일괄 생성 SSE(이벤트 이름·모양은
+  // Figma 소급 동기화와 같다: progress · ui_generated · ui_failed · done). 닫으면 중지.
+  async function fetchProposalUis(proposalId) {
+    const res = await fetch(`${BASE}/${proposalId}/ui-wireframes`)
+    if (!res.ok) throw new Error(`ui-wireframes ${res.status}`)
+    return res.json()
+  }
+
+  function streamProposalUiWireframes(proposalId, { onlyMissing = true, onEvent, onClose, onError } = {}) {
+    const lang = (typeof localStorage !== 'undefined' && localStorage.getItem('app_display_language')) || 'ko'
+    const qs = new URLSearchParams({ onlyMissing: onlyMissing ? 'true' : 'false', lang })
+    const es = new EventSource(`${BASE}/stream/${proposalId}/ui-wireframes?${qs}`)
+    let closed = false
+    const close = () => { if (closed) return; closed = true; try { es.close() } catch { /* noop */ } }
+    for (const name of ['progress', 'ui_generated', 'ui_failed', 'done']) {
+      es.addEventListener(name, (ev) => {
+        let payload = {}
+        try { payload = JSON.parse(ev.data) } catch { /* keep empty */ }
+        onEvent && onEvent(name, payload)
+        if (name === 'done') {
+          close()
+          _notifyGraphChanged('ui-wireframes', proposalId)
+          onClose && onClose(payload)
+        }
+      })
+    }
+    es.onerror = (ev) => { if (closed) return; close(); onError && onError(ev) }
+    return close
+  }
+
   // D-2 ⑭ ② 「고치고 다시 검증」 루프 — 상태는 store 에 둔다(셀을 보러 탭을 옮겨도 계속 돈다).
   // 한 번에 한 항목만 돈다(검증 스트림이 하나다). 상한 기본 3회, 중단은 stopFixLoop().
   const fixLoop = ref({ active: false, proposalId: null, scenarioId: null, phase: null, round: 0, max: 0, outcome: null, error: null })
@@ -1057,6 +1087,7 @@ export const useProposalsStore = defineStore('proposals', () => {
     implementProposal, completeImplementation, fetchProgress,
     fetchTestResults, runValidation, subscribeToValidation, stopValidation, fetchSandboxHead,
     fixLoop, startFixLoop, stopFixLoop,
+    fetchProposalUis, streamProposalUiWireframes,
     acceptProposal, destroyProposal, revokeProposal, retryMerge,
   }
 })

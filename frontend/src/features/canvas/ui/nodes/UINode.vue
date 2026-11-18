@@ -1,7 +1,10 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { Handle, Position } from '@vue-flow/core'
 import { useTerminologyStore } from '@/features/terminology/terminology.store'
+import { useCanvasStore } from '@/features/canvas/canvas.store'
+import { useI18n } from '@/app/i18n'
+import { PROPOSALS_VISIBLE } from '@/app/featureVisibility'
 
 const props = defineProps({
   id: String,
@@ -9,10 +12,46 @@ const props = defineProps({
 })
 
 const terminologyStore = useTerminologyStore()
+const canvasStore = useCanvasStore()
+const { t } = useI18n()
 const headerText = computed(() => `<< ${terminologyStore.getTerm('UI')} >>`)
 
 // Show template preview indicator
 const hasTemplate = computed(() => !!props.data?.template)
+
+// D-5 ⑰ ④ "No wireframe" 배지를 **생성 단추**로 — 인스펙터를 열지 않고 바로 만든다.
+// 인스펙터의 HTML 생성과 같은 생성기(/api/ai-design/html-edit, 빈 instruction)를 쓴다.
+// 라이브 캔버스의 노드일 때만 단추다(미리보기·다른 읽기 전용 뷰에서는 배지 그대로).
+// 프로포절이 만든 UI 가 비어 생기는 문제라서 Proposals 를 따라간다 — Proposals 를 감춘
+// 고객 판의 캔버스는 지금 그대로(배지)다.
+const generating = ref(false)
+const genError = ref('')
+const canGenerate = computed(() =>
+  PROPOSALS_VISIBLE && !canvasStore.isPreviewing && canvasStore.nodes.some((n) => n.id === props.id),
+)
+
+async function generateWireframe() {
+  if (generating.value || !props.id) return
+  generating.value = true
+  genError.value = ''
+  try {
+    const resp = await fetch(`/api/ai-design/html-edit/${encodeURIComponent(props.id)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ display_language: localStorage.getItem('app_display_language') || 'ko' }),
+    })
+    if (!resp.ok) {
+      const d = await resp.json().catch(() => ({}))
+      throw new Error(d.detail || `HTTP ${resp.status}`)
+    }
+    const result = await resp.json()
+    if (result?.template) canvasStore.patchNodeData(props.id, { template: result.template })
+  } catch (e) {
+    genError.value = e?.message || String(e)
+  } finally {
+    generating.value = false
+  }
+}
 </script>
 
 <template>
@@ -35,6 +74,15 @@ const hasTemplate = computed(() => !!props.data?.template)
       <!-- Template status -->
       <div class="es-node__status" :class="{ 'has-template': hasTemplate }">
         <span v-if="hasTemplate">✓ Wireframe</span>
+        <button
+          v-else-if="canGenerate"
+          type="button"
+          class="es-node__gen nodrag"
+          :disabled="generating"
+          :title="genError || t('canvas.uiNode.generateTitle')"
+          @click.stop="generateWireframe"
+          @mousedown.stop
+        >{{ generating ? t('canvas.uiNode.generating') : (genError ? t('canvas.uiNode.retry') : t('canvas.uiNode.generate')) }}</button>
         <span v-else>No wireframe</span>
       </div>
     </div>
@@ -113,6 +161,27 @@ const hasTemplate = computed(() => !!props.data?.template)
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.es-node__gen {
+  font-size: 0.55rem;
+  padding: 1px 6px;
+  border-radius: 8px;
+  border: 1px dashed #adb5bd;
+  background: #fff;
+  color: #495057;
+  cursor: pointer;
+}
+
+.es-node__gen:hover:not(:disabled) {
+  border-style: solid;
+  border-color: var(--color-readmodel);
+  color: #212529;
+}
+
+.es-node__gen:disabled {
+  opacity: 0.7;
+  cursor: progress;
 }
 
 .es-node__status {

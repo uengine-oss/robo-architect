@@ -102,6 +102,18 @@ export const messages = {
   'proposals.dualMerge.mergeFailedFallback':       { ko: 'Dual Merge 실패. 로그를 확인하세요.', en: 'Dual Merge failed. Please check the logs.' },
   'proposals.dualMerge.retrying':                  { ko: '재시도 중...', en: 'Retrying…' },
   'proposals.dualMerge.retryMerge':                { ko: 'Dual Merge 재시도', en: 'Retry Dual Merge' },
+  // D-5 ⑰ ④ 캔버스 UINode 의 "No wireframe" → 생성 단추
+  'canvas.uiNode.generate':                        { ko: '+ 와이어프레임 생성', en: '+ Generate wireframe' },
+  'canvas.uiNode.generating':                      { ko: '생성 중…', en: 'Generating…' },
+  'canvas.uiNode.retry':                           { ko: '실패 — 다시', en: 'Failed — retry' },
+  'canvas.uiNode.generateTitle':                   { ko: '이 화면의 이름·설명으로 HTML 와이어프레임을 만듭니다(LLM 호출 1회)', en: 'Generates an HTML wireframe from this screen\'s name and description (one LLM call)' },
+  // D-5 ⑰ Accept 뒤 UI 와이어프레임 생성
+  'proposals.uiWireframes.summary':                { ko: 'UI {n}건 (와이어프레임 없음 {missing}건)', en: '{n} UI screens ({missing} without wireframe)' },
+  'proposals.uiWireframes.generate':               { ko: '와이어프레임 생성 ({n}건)', en: 'Generate wireframes ({n})' },
+  'proposals.uiWireframes.regenerate':             { ko: '와이어프레임 다시 생성', en: 'Regenerate wireframes' },
+  'proposals.uiWireframes.progress':               { ko: '생성 중 {done}/{total}', en: 'Generating {done}/{total}' },
+  'proposals.uiWireframes.done':                   { ko: '완료 — 생성 {generated}건 · 실패 {failures}건', en: 'Done — {generated} generated · {failures} failed' },
+  'proposals.uiWireframes.dropped':                { ko: '진행 연결이 끊겼습니다 — 이미 만든 화면은 저장돼 있습니다.', en: 'Progress connection dropped — screens already generated are saved.' },
   'proposals.dualMerge.acceptedAt':                { ko: 'Dual Merge 완료 — {date}', en: 'Dual Merge completed — {date}' },
   'proposals.dualMerge.acceptedNote':              { ko: '코드와 그래프 DB가 동기화되었습니다.', en: 'Code and graph DB are now in sync.' },
   // 실패를 두고 Accept 한 판에서는 위 문장이 **거짓**이다 — 그 경우를 따로 쓴다.

@@ -1318,6 +1318,9 @@ export const useCanvasStore = defineStore('canvas', () => {
     collapsedBCs.value = new Set()
   }
 
+  // 미리보기 중인가 — 미리보기 노드에서 라이브 그래프를 쓰는 동작(와이어프레임 생성 등)을 막는다.
+  const isPreviewing = computed(() => !!_previewSnapshot.value)
+
   function endPreview() {
     const snap = _previewSnapshot.value
     if (!snap) return
@@ -2377,6 +2380,7 @@ export const useCanvasStore = defineStore('canvas', () => {
     clearCanvas,
     beginPreview,
     endPreview,
+    isPreviewing,
     patchNodeData,
     updateNodePosition,
     updateBCSize,
