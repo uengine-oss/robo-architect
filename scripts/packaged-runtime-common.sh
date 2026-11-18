@@ -22,12 +22,16 @@ copy_app_snapshot() {
 #   write_runtime_files --root <repo> --out <runtime> --version <v> --registry <r> --source-tag <t>
 #                       --python <interpreter, relative to the runtime> [--digests <file>]
 #                       [--image-tag <tag>] [--context <docker context>] [--arch <amd64|arm64>]
-#                       [--check-images | --no-images]
+#                       [--check-images | --no-images] [--variant age-fabric]
 #   --image-tag     the release references' tag (default: the version)
 #   --context       read the local images through this docker context (default: the current one)
 #   --arch          refuse local images of another architecture
 #   --check-images  only check that the local images are there, write nothing
 #   --no-images     write compose.yml and the settings but no manifest (the images are not built yet)
+#   --variant       age-fabric: the Apache AGE + og-fabric configuration — compose.age-fabric.yml, og-fabric's
+#                   settings, the images of scripts/age-fabric-images.txt (local references with their own tags;
+#                   --source-tag is not used), deployVariant in the manifest. Default: the regular configuration,
+#                   written exactly as before.
 write_runtime_files() {
   python3 - "$@" <<'PY'
 import argparse, hashlib, json, os, shutil, subprocess, sys
@@ -42,7 +46,9 @@ ap.add_argument("--context", default="")
 ap.add_argument("--arch", default="")
 ap.add_argument("--check-images", action="store_true")
 ap.add_argument("--no-images", action="store_true")
+ap.add_argument("--variant", default="ontological", choices=["ontological", "age-fabric"])
 args = ap.parse_args()
+age = args.variant == "age-fabric"
 root, out, version, registry, source_tag = Path(args.root), Path(args.out), args.version, args.registry, args.source_tag
 digests_file, image_tag = args.digests, args.image_tag or args.version
 docker = ["docker"] + (["--context", args.context] if args.context else [])
@@ -59,6 +65,14 @@ IMAGES = {
     # open-pencil 렌더러. 없으면 와이어프레임 단계가 **조용히** 빈다(compose 의 주석에 실측).
     "wireframe": ("uengine/open-pencil",        "wireframe"),
 }
+# manifest key → the local image (with its tag) a release pushes
+LOCAL = {key: f"{local}:{source_tag}" for key, (local, _) in IMAGES.items()}
+if age:
+    IMAGES, LOCAL = {}, {}
+    for line in (root / "scripts" / "age-fabric-images.txt").read_text(encoding="utf-8").splitlines():
+        if line.strip() and not line.startswith("#"):
+            key, local, component = line.split("|")
+            IMAGES[key], LOCAL[key] = (local, component), local
 
 # Per-service settings (the same values as the development runtime, robo-lite-src/build/make-runtime.py).
 # The analyzer's LLM is the user's Claude Code through the host API (/api/llm-bridge/v1), embeddings
@@ -112,6 +126,15 @@ PARSER_REPAIR_AGENT_ENABLED=false
 """,
     "gateway": "",
 }
+if age:
+    # og-fabric's settings (no secrets: the DSNs and both tokens come from the app at start, compose.age-fabric.yml)
+    ENV["fabric"] = """OG_FABRIC_LOCALHOST_AS=host.docker.internal
+OG_FABRIC_INLINE_PASSWORDS=refuse
+OG_FABRIC_QUERY_TIMEOUT_MS=30000
+OG_FABRIC_QUERY_TIMEOUT_MS_MAX=300000
+OG_FABRIC_ADMIN_TIMEOUT_MS=120000
+OG_FABRIC_INTERNAL_LOOPBACK_ONLY=0
+"""
 
 # The host Architect API's settings (api/main.py load_dotenv). Proposals, plans and implementation
 # run as skills through the local Claude Code CLI; Neo4j/Bolt settings come from the app at start.
@@ -125,9 +148,9 @@ def sha(p: Path) -> str:
     return hashlib.sha256(p.read_bytes()).hexdigest()
 
 
-def head(path) -> str:
+def head(path, ref: str = "HEAD") -> str:
     try:
-        return subprocess.check_output(["git", "-C", str(path), "rev-parse", "HEAD"], text=True,
+        return subprocess.check_output(["git", "-C", str(path), "rev-parse", ref], text=True,
                                        stderr=subprocess.DEVNULL).strip()
     except Exception:
         return "0" * 40
@@ -154,11 +177,14 @@ def image_size(ref: str) -> int:
 
 
 if args.check_images:
-    for local, _ in IMAGES.values():
-        image_id(f"{local}:{source_tag}")
+    for key in IMAGES:
+        image_id(LOCAL[key])
     raise SystemExit(0)
 
-shutil.copyfile(root / "desktop" / "runtime" / "compose.yml", out / "compose.yml")
+compose_file = "compose.age-fabric.yml" if age else "compose.yml"
+for old in ("compose.yml", "compose.age-fabric.yml"):
+    (out / old).unlink(missing_ok=True)
+shutil.copyfile(root / "desktop" / "runtime" / compose_file, out / compose_file)
 for name, text in ENV.items():
     (out / "config" / f"{name}.env").write_text(text, encoding="utf-8")
 (out / "architect" / "app" / ".env").write_text(ARCHITECT_ENV, encoding="utf-8")
@@ -175,29 +201,35 @@ images, ids, digests, sizes = {}, {}, {}, {}
 for key, (local, component) in IMAGES.items():
     ref = f"{registry}/robo-architect-lite-{component}:{image_tag}"
     images[key] = ref
-    ids[key] = image_id(f"{local}:{source_tag}")
+    ids[key] = image_id(LOCAL[key])
     entry = pushed.get(key)
     if entry:
         if entry.get("ref") != ref:
             raise SystemExit(f"[runtime] {digests_file}: {key} was pushed as {entry.get('ref')}, not {ref}")
         if entry.get("id") != ids[key]:
-            raise SystemExit(f"[runtime] {key}: {local}:{source_tag} is {ids[key]} but {entry.get('id')} was pushed — push again")
+            raise SystemExit(f"[runtime] {key}: {LOCAL[key]} is {ids[key]} but {entry.get('id')} was pushed — push again")
         digests[key] = entry["digest"]
         sizes[key] = int(entry["size"])
     else:
-        sizes[key] = image_size(f"{local}:{source_tag}")
+        sizes[key] = image_size(LOCAL[key])
 
 # Checkouts of the repositories that are not submodules here, at the commits the images came from.
 lite_src = Path(os.environ.get("ROBO_LITE_SRC", "/Users/uengine/robo-lite-src"))
+# age-fabric: the AGE image and the Bolt gateway come from ontological-db's age/main checkout, the fabric from og-fabric
+age_main = Path(os.environ.get("ROBO_AGE_MAIN", "/Users/uengine/worktrees/age-main"))
+og_fabric = Path(os.environ.get("ROBO_OG_FABRIC", "/Users/uengine/og-fabric"))
 if digests_file:
     # A release must say what it was built from: head() answers forty zeros for a missing checkout.
-    for repo in ("ontological-db", "antlr-code-parser", "api-gateway"):
-        if head(lite_src / repo) == "0" * 40:
-            raise SystemExit(f"[runtime] no git checkout at {lite_src / repo} — set ROBO_LITE_SRC")
+    checkouts = [lite_src / r for r in ("antlr-code-parser", "api-gateway")]
+    checkouts += [age_main, og_fabric] if age else [lite_src / "ontological-db"]
+    for repo in checkouts:
+        if head(repo) == "0" * 40:
+            raise SystemExit(f"[runtime] no git checkout at {repo} — set ROBO_LITE_SRC / ROBO_AGE_MAIN / ROBO_OG_FABRIC")
 environment = {k: {"file": f"config/{k}.env", "sha256": sha(out / "config" / f"{k}.env")} for k in ENV}
 environment["architect"] = {"file": "architect/app/.env", "sha256": sha(out / "architect" / "app" / ".env")}
 manifest = {
     "schemaVersion": 4,  # MANIFEST_SCHEMA_VERSION in desktop/src/main/docker-stack.ts — the app refuses any other
+    **({"deployVariant": "age-fabric"} if age else {}),
     "releaseId": f"lite-{version}",
     "releaseChannel": "stable",
     "releaseVariant": "lite",
@@ -205,7 +237,7 @@ manifest = {
     "authProvider": "none",
     "credentialNames": ["OPENAI_API_KEY", "LLM_API_KEY", "ROBO_LLM_API_KEY", "ROBO_EMBED_API_KEY",
                         "ROBO_SEARCH_LLM_API_KEY"],
-    "composeFile": "compose.yml",
+    "composeFile": compose_file,
     "imagePull": True,
     "images": images,
     "imageIds": ids,
@@ -215,12 +247,13 @@ manifest = {
     "environment": environment,
     "source": {
         "workspace": "0" * 40,
-        "ontological": head(lite_src / "ontological-db"),
+        "ontological": head(age_main) if age else head(lite_src / "ontological-db"),
         "architect": head(root),
         "openPencil": head(root / "open-pencil"),
         "analyzer": head(root / "robo-analyzer/robo-data-analyzer"),
-        "catalog": head(root / "robo-analyzer/robo-data-catalog"),
-        "fabric": head(root / "robo-analyzer/robo-data-fabric"),
+        # age-fabric: the catalog image is built from the submodule's feat/age-fabric branch, not the pin
+        "catalog": head(root / "robo-analyzer/robo-data-catalog", "feat/age-fabric" if age else "HEAD"),
+        "fabric": head(og_fabric) if age else head(root / "robo-analyzer/robo-data-fabric"),
         "frontend": head(root / "robo-analyzer/robo-data-frontend"),
         "parser": head(lite_src / "antlr-code-parser"),
         "gateway": head(lite_src / "api-gateway"),

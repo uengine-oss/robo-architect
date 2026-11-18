@@ -5,7 +5,12 @@
 #
 #   scripts/build-packaged-runtime.sh [--version 0.1.0] [--python 3.14] [--out <dir>]
 #                                     [--registry ghcr.io/uengine-oss] [--source-tag lite-mac]
-#                                     [--digests <image-digests.json>]
+#                                     [--digests <image-digests.json>] [--variant age-fabric]
+#
+#   --variant age-fabric   the Apache AGE edition: compose.age-fabric.yml, og-fabric's settings, the images of
+#                          scripts/age-fabric-images.txt, deployVariant age-fabric in the manifest. Default --out
+#                          desktop/out/age/runtime (desktop/electron-builder.age.js packs it); resources/runtime
+#                          stays the regular runtime.
 #
 # What it writes (default --out desktop/resources/runtime, gitignored):
 #   runtime-manifest.json   images = <registry>/robo-architect-lite-<component>:<version> with the
@@ -27,8 +32,9 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 . "$ROOT/scripts/packaged-runtime-common.sh"      # say, die, copy_app_snapshot, write_runtime_files
 VERSION=$(node -p "require('$ROOT/desktop/package.json').version")
 PYTHON_VERSION=""
-OUT="$ROOT/desktop/resources/runtime"
+OUT=""
 REGISTRY="ghcr.io/uengine-oss"
+VARIANT=ontological
 SOURCE_TAG="lite-mac"
 DIGESTS=""
 
@@ -40,11 +46,17 @@ while [ $# -gt 0 ]; do
     --registry) REGISTRY=$2; shift 2 ;;
     --source-tag) SOURCE_TAG=$2; shift 2 ;;
     --digests) DIGESTS=$2; shift 2 ;;
-    -h|--help) sed -n '2,26p' "$0"; exit 0 ;;
+    --variant) VARIANT=$2; shift 2 ;;
+    -h|--help) sed -n '2,32p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
 
+case "$VARIANT" in
+  ontological) OUT=${OUT:-$ROOT/desktop/resources/runtime} ;;
+  age-fabric) OUT=${OUT:-$ROOT/desktop/out/age/runtime}; mkdir -p "$OUT" ;;
+  *) die "--variant is age-fabric (or leave it out)" ;;
+esac
 [ "$(uname -s)/$(uname -m)" = "Darwin/arm64" ] || die "build on an Apple Silicon Mac (the runtime is arm64 macOS)"
 command -v uv >/dev/null || die "uv is required (https://docs.astral.sh/uv/)"
 command -v docker >/dev/null || die "docker is required (image IDs are read from the local images)"
@@ -104,7 +116,7 @@ say "compiling bytecode"
 
 # ── 6. compose, service settings, the backend's settings file, manifest ────────────────────
 write_runtime_files --root "$ROOT" --out "$OUT" --version "$VERSION" --registry "$REGISTRY" \
-  --source-tag "$SOURCE_TAG" --digests "$DIGESTS" --python architect/python/bin/python3
+  --source-tag "$SOURCE_TAG" --digests "$DIGESTS" --python architect/python/bin/python3 --variant "$VARIANT"
 
 # ── 7. the bundled backend imports ─────────────────────────────────────────────────────────
 say "checking that the bundled backend imports"

@@ -2,10 +2,15 @@
 # Push the stack images to the public GitHub Container Registry and record what was pushed.
 #
 #   scripts/release/push-images.sh [--version 0.1.0] [--arch arm64|amd64] [--source-tag lite-mac] [--dry-run]
+#                                  [--variant age-fabric]
 #
 #   uengine/<image>:lite-mac  →  ghcr.io/uengine-oss/robo-architect-lite-<component>:<version>
 #   --arch amd64 (Windows):  uengine/<image>:lite-win  →  …:<version>-amd64, desktop/out/release/image-digests-amd64.json
 #   (a tag of its own, so :<version> stays the arm64 image the macOS release pinned)
+#   --variant age-fabric (the Apache AGE edition, arm64 only): the nine images of scripts/age-fabric-images.txt,
+#   each from its own local reference → …:<version>, desktop/out/release/image-digests-age-fabric.json.
+#   Components that mean the same thing share the regular packages (graph-db is AGE there, fabric is og-fabric);
+#   fabric-db is a package of its own. The regular release's images it reuses keep their digests.
 #
 # Writes desktop/out/release/image-digests.json ({key: {ref, id, digest, size}}), which
 # scripts/build-packaged-runtime.sh --digests reads: the release manifest then pins every pull to
@@ -22,13 +27,15 @@ SOURCE_TAG=
 ARCH=arm64
 ORG=uengine-oss
 DRY=0
+VARIANT=ontological
 while [ $# -gt 0 ]; do
   case "$1" in
     --version) VERSION=$2; shift 2 ;;
     --source-tag) SOURCE_TAG=$2; shift 2 ;;
     --arch) ARCH=$2; shift 2 ;;
     --dry-run) DRY=1; shift ;;
-    -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
+    --variant) VARIANT=$2; shift 2 ;;
+    -h|--help) sed -n '2,21p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -50,6 +57,16 @@ fabric|uengine/robo-data-fabric|fabric
 parser|uengine/robo-antlr-parser|parser
 gateway|uengine/robo-api-gateway|gateway
 wireframe|uengine/open-pencil|wireframe"
+# each line's local image with its tag
+IMAGES=$(printf '%s\n' "$IMAGES" | sed "s/^\([^|]*\)|\([^|]*\)|/\1|\2:$SOURCE_TAG|/")
+case "$VARIANT" in
+  ontological) ;;
+  age-fabric)
+    [ "$ARCH" = arm64 ] || die "the age-fabric edition is arm64 only"
+    IMAGES=$(grep -v '^#' "$ROOT/scripts/age-fabric-images.txt" | grep -v '^[[:space:]]*$')
+    DIGESTS_NAME=image-digests-age-fabric.json ;;
+  *) die "--variant is age-fabric (or leave it out)" ;;
+esac
 
 OUT_DIR="$ROOT/desktop/out/release"
 OUT="$OUT_DIR/$DIGESTS_NAME"
@@ -57,9 +74,9 @@ mkdir -p "$OUT_DIR"
 
 # ── preflight: every local image is there and arm64 ────────────────────────────────────────
 while IFS='|' read -r key local component; do
-  arch=$(docker image inspect "$local:$SOURCE_TAG" --format '{{.Architecture}}' 2>/dev/null) \
-    || die "missing local image $local:$SOURCE_TAG"
-  [ "$arch" = "$ARCH" ] || die "$local:$SOURCE_TAG is $arch, not $ARCH"
+  arch=$(docker image inspect "$local" --format '{{.Architecture}}' 2>/dev/null) \
+    || die "missing local image $local"
+  [ "$arch" = "$ARCH" ] || die "$local is $arch, not $ARCH"
 done <<< "$IMAGES"
 
 # ── login (the gh token, never printed) ────────────────────────────────────────────────────
@@ -77,9 +94,9 @@ echo "{" > "$OUT.tmp"
 first=1
 while IFS='|' read -r key local component; do
   ref="ghcr.io/$ORG/robo-architect-lite-$component:$VERSION$TAG_SUFFIX"
-  id=$(docker image inspect "$local:$SOURCE_TAG" --format '{{.Id}}')
-  say "$local:$SOURCE_TAG → $ref"
-  run docker image tag "$local:$SOURCE_TAG" "$ref"
+  id=$(docker image inspect "$local" --format '{{.Id}}')
+  say "$local → $ref"
+  run docker image tag "$local" "$ref"
   if [ "$DRY" = 1 ]; then
     digest=$id
   else
@@ -89,7 +106,7 @@ while IFS='|' read -r key local component; do
       | python3 -c 'import json,sys; print(json.load(sys.stdin)["digest"])')
   fi
   # download size = config + layers of the $ARCH manifest in the registry (local content size as a fallback)
-  size=$(python3 - "$ref" "$DRY" "$ARCH" <<'PY' || docker image inspect "$local:$SOURCE_TAG" --format '{{.Size}}'
+  size=$(python3 - "$ref" "$DRY" "$ARCH" <<'PY' || docker image inspect "$local" --format '{{.Size}}'
 import json, subprocess, sys
 ref, dry, arch = sys.argv[1], sys.argv[2] == "1", sys.argv[3]
 if dry:
@@ -120,5 +137,5 @@ while IFS='|' read -r key local component; do
   gh api -X PATCH "/orgs/$ORG/packages/container/robo-architect-lite-$component" -f visibility=public \
     >/dev/null 2>&1 || true
 done <<< "$IMAGES"
-"$ROOT/scripts/release/check-images-public.sh" --version "$VERSION$TAG_SUFFIX"
+"$ROOT/scripts/release/check-images-public.sh" --version "$VERSION$TAG_SUFFIX" --variant "$VARIANT"
 say "all stack images are pushed and public"

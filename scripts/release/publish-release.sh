@@ -2,6 +2,11 @@
 # Publish the macOS installer on the public releases repository.
 #
 #   scripts/release/publish-release.sh [--version 0.1.0] [--draft]
+#   scripts/release/publish-release.sh --variant age-fabric [--notes-file <md>] [--draft]
+#
+# --variant age-fabric: the Apache AGE edition (desktop/electron-builder.age.js) as a **pre-release** —
+# Robo-Architect-Lite-AGE-mac-arm64.dmg, "Robo Architect Lite AGE.app", the fabric-db package checked too,
+# never --latest (the website's releases/latest link stays the regular app) and the README left alone.
 #
 # 1. checks the built app: its runtime manifest names the images of this version, pinned to pushed
 #    digests, and every image can be pulled anonymously (otherwise first launch fails for everyone)
@@ -19,10 +24,15 @@ VERSION=$(node -p "require('$ROOT/desktop/package.json').version")
 DRAFT=""
 REPO=uengine-oss/robo-architect-lite-releases
 ASSET=Robo-Architect-Lite-mac-arm64.dmg
+PRODUCT="Robo Architect Lite"
+VARIANT=ontological
+NOTES_FILE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --version) VERSION=$2; shift 2 ;;
     --draft) DRAFT=--draft; shift ;;
+    --variant) VARIANT=$2; shift 2 ;;
+    --notes-file) NOTES_FILE=$2; shift 2 ;;
     -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
@@ -30,19 +40,26 @@ done
 say() { printf '\033[36m[publish]\033[0m %s\n' "$*"; }
 die() { printf '\033[31m[publish]\033[0m %s\n' "$*" >&2; exit 1; }
 
+case "$VARIANT" in
+  ontological) ;;
+  age-fabric) ASSET=Robo-Architect-Lite-AGE-mac-arm64.dmg; PRODUCT="Robo Architect Lite AGE" ;;
+  *) die "--variant is age-fabric (or leave it out)" ;;
+esac
 DMG="$ROOT/desktop/out/dist/$ASSET"
-APP="$ROOT/desktop/out/dist/mac-arm64/Robo Architect Lite.app"
+APP="$ROOT/desktop/out/dist/mac-arm64/$PRODUCT.app"
 [ -f "$DMG" ] || die "no $DMG — build it: scripts/build-packaged-runtime.sh --digests … && (cd desktop && npm run dist:mac)"
 [ "$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$APP/Contents/Info.plist")" = "$VERSION" ] \
   || die "the built app is not version $VERSION"
 codesign --verify --deep --strict "$APP" || die "the built app's signature does not verify"
 
 # ── 1. the packaged manifest ───────────────────────────────────────────────────────────────
-python3 - "$APP/Contents/Resources/runtime/runtime-manifest.json" "$VERSION" <<'PY'
+python3 - "$APP/Contents/Resources/runtime/runtime-manifest.json" "$VERSION" "$VARIANT" <<'PY'
 import json, sys
 m = json.load(open(sys.argv[1]))
-version = sys.argv[2]
+version, variant = sys.argv[2], sys.argv[3]
 problems = []
+if (m.get("deployVariant") or "ontological") != variant:
+    problems.append(f"deployVariant is {m.get('deployVariant')}, not {variant}")
 if not m.get("imagePull"):
     problems.append("imagePull is not set")
 for key, ref in m["images"].items():
@@ -55,7 +72,7 @@ if problems:
 print(f"[publish] packaged runtime: {len(m['images'])} images of {version}, pinned, "
       f"{sum(m.get('imageSizes', {}).values()) / 1e9:.2f} GB to download")
 PY
-"$ROOT/scripts/release/check-images-public.sh" --version "$VERSION" >/dev/null \
+"$ROOT/scripts/release/check-images-public.sh" --version "$VERSION" --variant "$VARIANT" >/dev/null \
   || die "not every image is public — run scripts/release/check-images-public.sh for the pages to change"
 say "images are public"
 
@@ -66,18 +83,20 @@ if ! gh repo view "$REPO" >/dev/null 2>&1; then
     --description "Robo Architect Lite desktop app installers (macOS Apple Silicon)" \
     --homepage "https://www.uengine.org/en/contents/roboarchitect.html"
 fi
-readme_sha=$(gh api "repos/$REPO/contents/README.md" --jq .sha 2>/dev/null || true)
-gh api -X PUT "repos/$REPO/contents/README.md" \
-  -f message="README: Robo Architect Lite $VERSION" \
-  -f content="$(base64 < "$ROOT/scripts/release/releases-README.md" | tr -d '\n')" \
-  ${readme_sha:+-f sha="$readme_sha"} >/dev/null
-say "README.md updated"
+if [ "$VARIANT" = ontological ]; then
+  readme_sha=$(gh api "repos/$REPO/contents/README.md" --jq .sha 2>/dev/null || true)
+  gh api -X PUT "repos/$REPO/contents/README.md" \
+    -f message="README: Robo Architect Lite $VERSION" \
+    -f content="$(base64 < "$ROOT/scripts/release/releases-README.md" | tr -d '\n')" \
+    ${readme_sha:+-f sha="$readme_sha"} >/dev/null
+  say "README.md updated"
+fi
 
 # ── 3. the release ─────────────────────────────────────────────────────────────────────────
 TAG="v$VERSION"
 gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1 && die "release $TAG already exists — bump the version"
 NOTES=$(mktemp -t robo-release-notes)
-cat > "$NOTES" <<EOF
+if [ -n "$NOTES_FILE" ]; then cp "$NOTES_FILE" "$NOTES"; else cat > "$NOTES" <<EOF
 Robo Architect Lite $VERSION for macOS (Apple Silicon).
 
 **Download:** \`$ASSET\` below — open it and drag the app to Applications.
@@ -90,14 +109,21 @@ System Settings › Privacy & Security and click **Open Anyway**.
 
 Images: \`ghcr.io/uengine-oss/robo-architect-lite-*:$VERSION\`.
 EOF
-gh release create "$TAG" "$DMG" --repo "$REPO" --title "Robo Architect Lite $VERSION" \
-  --notes-file "$NOTES" --latest $DRAFT
+fi
+if [ "$VARIANT" = ontological ]; then
+  gh release create "$TAG" "$DMG" --repo "$REPO" --title "$PRODUCT $VERSION" \
+    --notes-file "$NOTES" --latest $DRAFT
+else
+  gh release create "$TAG" "$DMG" --repo "$REPO" --title "$PRODUCT $VERSION (preview)" \
+    --notes-file "$NOTES" --prerelease --latest=false $DRAFT
+fi
 rm -f "$NOTES"
 say "released $TAG"
 
 # ── 4. the link the website uses ───────────────────────────────────────────────────────────
 if [ -z "$DRAFT" ]; then
   URL="https://github.com/$REPO/releases/latest/download/$ASSET"
+  [ "$VARIANT" = ontological ] || URL="https://github.com/$REPO/releases/download/$TAG/$ASSET"
   code=$(curl -s -o /dev/null -L -r 0-0 -w '%{http_code}' "$URL")
   case "$code" in 200|206) say "download link answers: $URL" ;; *) die "download link answered $code: $URL" ;; esac
 fi

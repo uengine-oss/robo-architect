@@ -1,6 +1,6 @@
 {
   "name": "robo-architect-desktop",
-  "version": "0.1.4",
+  "version": "0.1.4-age.1",
   "private": true,
   "description": "Robo Architect Lite — desktop app (Electron shell + host Architect API + Docker stack on Ontological DB).",
   "author": "uEngine",
@@ -15,6 +15,7 @@
     "test": "playwright test",
     "lint": "eslint \"src/**/*.ts\" \"tests/**/*.ts\"",
     "dist:mac": "npm run build && npm run build:figma && electron-builder --mac --arm64",
+    "dist:mac:age": "npm run build && npm run build:figma && electron-builder --mac --arm64 --config electron-builder.age.js",
     "dist:win": "npm run build && npm run build:figma && electron-builder --win --x64 --config electron-builder.win.js",
     "build:figma": "bash ../figma-plugin/build.sh"
   },
