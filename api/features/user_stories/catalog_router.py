@@ -8,6 +8,7 @@ from starlette.requests import Request
 from api.platform.neo4j import get_session
 from api.platform.observability.request_logging import http_context
 from api.platform.observability.smart_logger import SmartLogger
+from api.platform import singleflight
 
 router = APIRouter(prefix="/api/user-stories", tags=["user-stories"])
 
@@ -56,6 +57,11 @@ async def get_all_user_stories(request: Request) -> list[dict[str, Any]]:
 
 @router.get("/unassigned")
 def get_unassigned_user_stories(request: Request) -> list[dict[str, Any]]:
+    # 남의 쓰기 뒤 보던 창들이 같은 것을 동시에 다시 읽는다 — 같은 조회는 한 번만 돈다.
+    return singleflight.run(singleflight.graph_key("user-stories.unassigned"), lambda: _unassigned_user_stories(request))
+
+
+def _unassigned_user_stories(request: Request) -> list[dict[str, Any]]:
     """
     GET /api/user-stories/unassigned - BC에 할당되지 않은 User Story 조회
     """

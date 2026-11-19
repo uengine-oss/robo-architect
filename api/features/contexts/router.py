@@ -10,6 +10,7 @@ from starlette.requests import Request
 from api.platform.neo4j import get_session
 from api.platform.observability.request_logging import http_context
 from api.platform.observability.smart_logger import SmartLogger
+from api.platform import singleflight
 
 router = APIRouter(prefix="/api/contexts", tags=["contexts"])
 
@@ -155,6 +156,11 @@ async def patch_bc_classification(
 
 @router.get("")
 def get_all_contexts(request: Request) -> list[dict[str, Any]]:
+    # 남의 쓰기 뒤 보던 창들이 같은 것을 동시에 다시 읽는다 — 같은 조회는 한 번만 돈다.
+    return singleflight.run(singleflight.graph_key("contexts.list"), lambda: _all_contexts(request))
+
+
+def _all_contexts(request: Request) -> list[dict[str, Any]]:
     """
     GET /api/contexts - BC 목록 조회
     Returns all Bounded Contexts with basic info.
@@ -289,6 +295,11 @@ def get_context_tree(context_id: str, request: Request) -> dict[str, Any]:
 
 @router.get("/{context_id}/full-tree")
 def get_context_full_tree(context_id: str, request: Request) -> dict[str, Any]:
+    # 남의 쓰기 뒤 보던 창들이 같은 것을 동시에 다시 읽는다 — 같은 조회는 한 번만 돈다.
+    return singleflight.run(singleflight.graph_key("contexts.full-tree", context_id), lambda: _context_full_tree(context_id, request))
+
+
+def _context_full_tree(context_id: str, request: Request) -> dict[str, Any]:
     """
     GET /api/contexts/{id}/full-tree - BC 하위 전체 트리 (정규화된 구조)
     """
