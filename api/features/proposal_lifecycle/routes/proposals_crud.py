@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 from datetime import datetime, timezone
 from typing import Optional
@@ -319,9 +318,12 @@ async def answer_clarification(proposal_id: str, body: AnswerClarificationReques
             id=proposal_id, clog=clog_str,
         )
 
-    # 백그라운드로 intent 재실행
-    from api.features.proposal_lifecycle.services.intent_runner import run_intent_with_clarification
-    asyncio.create_task(run_intent_with_clarification(proposal_id, body.answers))
+    # 답을 넣어 intent 를 다시 돌린다 — 연결과 떨어진 작업(detached_runs)으로. 화면은 곧이어
+    # 스트림을 열어 **이 작업에 붙는다**. 예전에는 여기서 run_intent 를 따로 돌리고 화면의 스트림이
+    # 또 한 번 돌려, 같은 분해가 두 번 돌고 결과를 서로 덮었다(lite 0.1.5 확인, 2026-11-19).
+    from api.features.proposal_lifecycle.services import detached_runs
+    from api.features.proposal_lifecycle.services.intent_runner import stream_intent
+    detached_runs.start_or_join(detached_runs.intent_key(proposal_id), lambda: stream_intent(proposal_id))
 
     updated = _get_proposal_row(proposal_id)
     return ProposalResponse.from_neo4j(updated, [])

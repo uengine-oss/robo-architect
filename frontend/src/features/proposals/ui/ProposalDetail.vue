@@ -64,6 +64,35 @@
       </div>
     </div>
 
+    <!-- 분해가 명확화 질문으로 끝났으면 여기서 답한다. 질문 화면이 생성 화면(ProposalCreate)에만
+         있어, 목록에서 이 proposal 을 열었거나 다른 화면에 갔다 왔으면 답할 길이 없었다
+         (lite 0.1.5 설치본 L-4, 2026-11-19). 질문은 clarificationLog 에 남아 있다. -->
+    <div v-if="pendingClarify.length && !intentRunningHere" class="intent-clarify" data-testid="intent-clarify">
+      <h4>{{ t('proposals.create.clarifyTitle') }}</h4>
+      <div v-for="(q, qi) in pendingClarify" :key="qi" class="clarify-question">
+        <p class="clarify-question__text">{{ q.text }}</p>
+        <div class="clarify-question__options">
+          <button
+            v-for="(opt, oi) in q.options"
+            :key="oi"
+            @click="clarifyAnswers = { ...clarifyAnswers, [qi]: opt }"
+            :class="['btn', 'btn--sm', clarifyAnswers[qi] === opt ? 'btn--primary' : 'btn--secondary']"
+          >{{ opt }}</button>
+          <input
+            v-model="clarifyCustom[qi]"
+            :placeholder="t('proposals.create.customAnswer')"
+            class="clarify-question__custom"
+          />
+        </div>
+      </div>
+      <div class="intent-clarify__actions">
+        <button @click="submitClarify" :disabled="!clarifyAllAnswered" class="btn btn--primary btn--sm">
+          {{ t('proposals.create.submitAnswers') }}
+        </button>
+        <button @click="clarifyDismissed = props.proposalId" class="btn btn--secondary btn--sm">{{ t('proposals.create.skipClarify') }}</button>
+      </div>
+    </div>
+
     <div class="detail-tabs">
       <button
         v-for="tab in availableTabs"
@@ -594,6 +623,41 @@ const intentPhaseText = computed(() => {
   return ''
 })
 watch(() => props.proposalId, (id) => { store.resumeIntentIfRunning(id) }, { immediate: true })
+
+// 답하지 않은 명확화 질문 — 마지막 답(answer) 뒤에 남은 질문 묶음. 방금 끝난 스트림이 낸 질문이
+// 아직 proposal 에 안 실렸으면 스트림 쪽을 쓴다. Strategic Diff 가 생겼으면 묻지 않는다.
+const clarifyAnswers = ref({})
+const clarifyCustom = ref({})
+const clarifyDismissed = ref(null)
+const pendingClarify = computed(() => {
+  const p = proposal.value
+  if (!p || p.id !== props.proposalId || clarifyDismissed.value === props.proposalId) return []
+  if (p.strategicDiff && Object.keys(p.strategicDiff).length) return []
+  const live = store.intentStream.proposalId === props.proposalId ? store.intentStream.clarificationQuestions : null
+  let log = p.clarificationLog
+  if (typeof log === 'string') { try { log = JSON.parse(log) } catch { log = [] } }
+  log = Array.isArray(log) ? log : []
+  let lastAnswer = -1
+  log.forEach((e, i) => { if (e && 'answer' in e) lastAnswer = i })
+  const saved = log.slice(lastAnswer + 1).filter((e) => e && e.question)
+    .map((e) => ({ text: e.question, options: e.options || [] }))
+  if (saved.length) return saved
+  return Array.isArray(live) ? live.map((q) => ({ text: q.text, options: q.options || [] })) : []
+})
+const clarifyAllAnswered = computed(() =>
+  pendingClarify.value.every((_, i) => clarifyAnswers.value[i] || clarifyCustom.value[i]))
+watch(() => props.proposalId, () => { clarifyAnswers.value = {}; clarifyCustom.value = {} })
+async function submitClarify() {
+  const id = props.proposalId
+  const answers = pendingClarify.value.map((_, i) => ({
+    questionIndex: i,
+    answer: clarifyAnswers.value[i] || clarifyCustom.value[i] || '',
+  }))
+  await store.answerClarification(id, answers)
+  clarifyAnswers.value = {}
+  clarifyCustom.value = {}
+  store.subscribeToIntent(id)
+}
 watch(showStrategicHistoryTabs, (visible) => {
   if (visible) intentStageTab.value = 'STRATEGIC_DESIGN'
 })
@@ -670,6 +734,13 @@ function formatDate(dt) {
 .feedback-box__textarea { width: 100%; resize: vertical; font-size: 13px; border: 1px solid var(--color-border); border-radius: 4px; padding: 6px; background: var(--color-bg); color: var(--color-text); box-sizing: border-box; }
 .feedback-box__actions { margin-top: 8px; }
 .intent-running { margin: 8px 0 12px; }
+.intent-clarify { margin: 8px 0 12px; border: 1px solid var(--color-border); border-radius: 6px; padding: 12px; background: var(--color-bg-secondary); }
+.intent-clarify h4 { margin: 0 0 8px; font-size: 13px; }
+.intent-clarify .clarify-question { margin-bottom: 10px; }
+.intent-clarify .clarify-question__text { margin: 0 0 6px; font-size: 13px; color: var(--color-text); }
+.intent-clarify .clarify-question__options { display: flex; flex-wrap: wrap; gap: 6px; }
+.intent-clarify .clarify-question__custom { flex: 1 1 200px; font-size: 12px; padding: 4px 6px; border: 1px solid var(--color-border); border-radius: 4px; background: var(--color-bg); color: var(--color-text); }
+.intent-clarify__actions { display: flex; gap: 8px; }
 .intent-running__head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 13px; }
 .intent-running__head .btn { margin-left: auto; }
 .intent-running__head .spinner { width: 10px; height: 10px; border: 2px solid var(--color-border); border-top-color: var(--color-accent); border-radius: 50%; animation: intent-spin 0.8s linear infinite; flex-shrink: 0; }

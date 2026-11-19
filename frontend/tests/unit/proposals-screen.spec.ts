@@ -235,4 +235,52 @@ test.describe('lite L-4 — Intent 분해를 다른 화면에 갔다 와도 되�
     await expect(page.getByTestId('intent-running')).toHaveCount(0)
     expect(calls[0]).toMatch(/\/status$/)
   })
+
+  test('분해가 명확화 질문으로 끝났으면 상세에서 답하고, 답하면 다시 분해에 붙는다', async ({ page }) => {
+    const clog = [
+      { question: '반차 2회는 어느 기간 기준인가요?', options: ['월 2회', '연 2회'] },
+      { question: '3회째부터는?', options: ['부서장 결재 추가', '차단'] },
+    ]
+    const item = proposal('PRO-001', 'DRAFT', { strategicDiff: null, clarificationLog: clog })
+    await mockApi(page, [item])
+    const clarify: unknown[] = []
+    const streams: string[] = []
+    await page.route('**/api/proposals/PRO-001/clarify', async (route) => {
+      clarify.push(route.request().postDataJSON())
+      // 서버처럼 답을 clarificationLog 에 붙여 둔다 — 뒤이은 조회도 답이 달린 상태를 받는다
+      item.clarificationLog = [...clog, { questionIndex: 0, answer: '월 2회' }, { questionIndex: 1, answer: '직접: 부서장' }]
+      return route.fulfill({ json: item })
+    })
+    await page.route('**/api/proposals/stream/PRO-001/intent**', async (route) => {
+      const url = new URL(route.request().url())
+      streams.push(`${url.pathname}${url.search}`)
+      if (url.pathname.endsWith('/status')) return route.fulfill({ json: { running: false, finished: false } })
+      return route.fulfill({ contentType: 'text/event-stream', body: sse([['done', { proposalId: 'PRO-001' }]]) })
+    })
+
+    await open(page)
+    await page.locator('.proposal-item').first().click()
+    const box = page.getByTestId('intent-clarify')
+    await expect(box).toBeVisible()
+    await expect(box).toContainText('반차 2회는 어느 기간 기준인가요?')
+    const submit = box.locator('.intent-clarify__actions .btn--primary')
+    await expect(submit).toBeDisabled()
+    await box.getByRole('button', { name: '월 2회' }).click()
+    await box.locator('.clarify-question__custom').nth(1).fill('직접: 부서장')
+    await submit.click()
+    await expect.poll(() => clarify.length).toBe(1)
+    expect(clarify[0]).toEqual({ answers: [{ questionIndex: 0, answer: '월 2회' }, { questionIndex: 1, answer: '직접: 부서장' }] })
+    await expect.poll(() => streams.some((s) => /\/intent$/.test(s))).toBe(true)  // 답한 뒤 분해에 붙는다
+    await expect(box).toHaveCount(0)  // 답이 달린 질문은 다시 묻지 않는다
+  })
+
+  test('Strategic Diff 가 있으면 남은 질문이 있어도 묻지 않는다', async ({ page }) => {
+    await mockApi(page, [proposal('PRO-001', 'DRAFT', { clarificationLog: [{ question: 'Q', options: ['a'] }] })])
+    await page.route('**/api/proposals/stream/PRO-001/intent**', (route) =>
+      route.fulfill({ json: { running: false, finished: false } }))
+    await open(page)
+    await page.locator('.proposal-item').first().click()
+    await expect(page.locator('.proposal-detail, body')).toContainText('PRO-001')
+    await expect(page.getByTestId('intent-clarify')).toHaveCount(0)
+  })
 })

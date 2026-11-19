@@ -91,6 +91,11 @@ class DetachedRun:
 _RUNS: dict[str, DetachedRun] = {}
 
 
+def intent_key(proposal_id: str) -> str:
+    """Intent 분해의 키 — 스트림 시작·붙기·명확화 답변 뒤 재실행이 같은 작업을 가리킨다."""
+    return f"intent:{proposal_id}"
+
+
 def _sweep() -> None:
     now = time.monotonic()
     for key in [k for k, r in _RUNS.items() if r.finished and r.finished_at and now - r.finished_at > KEEP_SECONDS]:

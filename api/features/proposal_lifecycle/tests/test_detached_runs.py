@@ -133,3 +133,52 @@ async def test_attach_route_does_not_start_work(monkeypatch):
         assert "event: done" in r.text and started == ["p6"]
         r = await client.get("/stream/p6/intent?attach=true")
         assert "event: done" in r.text and started == ["p6"], "끝난 분해에 붙으면 결과만 다시 받는다"
+
+
+@pytest.mark.asyncio
+async def test_clarify_answer_reruns_once_and_stream_joins(monkeypatch):
+    """명확화에 답하면 분해를 한 번만 다시 돌린다 — 이어 여는 스트림은 그 작업에 붙는다."""
+    from contextlib import contextmanager
+
+    from fastapi import FastAPI
+    from httpx import ASGITransport, AsyncClient
+
+    from api.features.proposal_lifecycle.routes import proposals_crud, proposals_intent
+
+    started: list[str] = []
+    gate = asyncio.Event()
+
+    async def fake_stream(pid):
+        started.append(pid)
+        yield "phase", {"message": "다시 분해"}
+        await gate.wait()
+        yield "done", {"proposalId": pid}
+
+    class _Session:
+        def run(self, *a, **k):
+            return None
+
+    @contextmanager
+    def _session():
+        yield _Session()
+
+    monkeypatch.setattr(proposals_intent, "stream_intent", fake_stream)
+    monkeypatch.setattr("api.features.proposal_lifecycle.services.intent_runner.stream_intent", fake_stream)
+    monkeypatch.setattr(proposals_crud, "get_session", _session)
+    monkeypatch.setattr(proposals_crud, "_get_proposal_row", lambda pid: {"id": pid, "clarificationLog": "[]"})
+    monkeypatch.setattr(proposals_crud.ProposalResponse, "from_neo4j", classmethod(lambda cls, row, _: {"id": row["id"]}))
+
+    from api.features.proposal_lifecycle.proposal_contracts import AnswerClarificationRequest
+
+    body = AnswerClarificationRequest(answers=[{"questionIndex": 0, "answer": "월 2회"}])
+    assert (await proposals_crud.answer_clarification("p7", body, None)) == {"id": "p7"}
+    await asyncio.sleep(0.01)
+
+    app = FastAPI()
+    app.include_router(proposals_intent.router)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
+        assert started == ["p7"], "답하면 분해가 detached 로 한 번 돈다"
+        gate.set()
+        r = await client.get("/stream/p7/intent")
+        assert "event: done" in r.text
+        assert started == ["p7"], "이어 여는 스트림은 새로 시작하지 않고 붙는다"

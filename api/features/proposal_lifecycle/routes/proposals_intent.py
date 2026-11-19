@@ -13,8 +13,7 @@ from api.platform.observability.smart_logger import SmartLogger
 router = APIRouter()
 
 
-def _intent_key(proposal_id: str) -> str:
-    return f"intent:{proposal_id}"
+_intent_key = detached_runs.intent_key
 
 
 def _sse(event_type: str, data: dict) -> str:
