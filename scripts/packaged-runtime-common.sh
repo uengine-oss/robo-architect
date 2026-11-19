@@ -30,7 +30,7 @@ copy_app_snapshot() {
 #   --no-images     write compose.yml and the settings but no manifest (the images are not built yet)
 write_runtime_files() {
   python3 - "$@" <<'PY'
-import argparse, hashlib, json, os, shutil, subprocess, sys
+import argparse, hashlib, json, os, shutil, subprocess, sys, urllib.request
 from pathlib import Path
 
 ap = argparse.ArgumentParser()
@@ -58,6 +58,17 @@ IMAGES = {
     "gateway":   ("uengine/robo-api-gateway",  "gateway"),
     # open-pencil 렌더러. 없으면 와이어프레임 단계가 **조용히** 빈다(compose 의 주석에 실측).
     "wireframe": ("uengine/open-pencil",        "wireframe"),
+}
+
+# Public images the release references as they are — not rebuilt, not re-pushed under
+# robo-architect-lite-*. Their identity (platform manifest digest · config digest · size) is read
+# from the registry anonymously, the way the app will pull them.
+#
+# pdf2bpmn: 문서→BPMN. main 개발 스펙(deploy/pdf2bpmn-selfhosted/compose.yml)과 같은 컨테이너 하나 —
+# 추출기 이미지 위에 facade.py 를 얹고, 백엔드가 PDF2BPMN_FACADE_URL 로 부른다. 핀은 main 의
+# runtime-manifest.template.json 과 같다(e618977). amd64 전용 — Apple Silicon 에서는 에뮬레이션으로 돈다.
+EXTERNAL_IMAGES = {
+    "pdf2bpmn": ("ghcr.io/uengine-oss/process-gpt-bpmn-extractor:19ea082", "amd64"),
 }
 
 # Per-service settings (the same values as the development runtime, robo-lite-src/build/make-runtime.py).
@@ -111,6 +122,14 @@ ROBO_DATASOURCE_REPLACE_LOCALHOST=host.docker.internal
 PARSER_REPAIR_AGENT_ENABLED=false
 """,
     "gateway": "",
+    # main 개발 스펙과 같다: OpenAI · gpt-4o · facade 공유키 없음(루프백 바인딩).
+    # OPENAI_BASE_URL 은 기본 주소 그대로지만 적어 둔다 — 앱의 pdf2bpmn 기능 프로브가 이 값으로
+    # 키를 값싸게 확인한다(없으면 "못 잼"). 키는 굽지 않는다(이름만 — compose 가 호스트 값을 넘긴다).
+    "pdf2bpmn": """OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_API_KEY
+LLM_MODEL=gpt-4o
+OPENAI_MODEL=gpt-4o
+""",
 }
 
 # The analyzer checks a sealed capability file for its LLM before every run (run_executor preflight)
@@ -164,6 +183,31 @@ def image_size(ref: str) -> int:
     return int(inspect(ref, "{{.Size}}"))
 
 
+def registry_identity(ref: str, arch: str) -> tuple[str, str, int]:
+    """(platform manifest digest, config digest, download size) of a public ghcr image, anonymously."""
+    name, _, tag = ref.removeprefix("ghcr.io/").rpartition(":")
+    accept = ", ".join([
+        "application/vnd.oci.image.index.v1+json", "application/vnd.docker.distribution.manifest.list.v2+json",
+        "application/vnd.oci.image.manifest.v1+json", "application/vnd.docker.distribution.manifest.v2+json"])
+    with urllib.request.urlopen(f"https://ghcr.io/token?scope=repository:{name}:pull", timeout=30) as r:
+        token = json.load(r)["token"]
+
+    def get(reference: str) -> tuple[dict, str]:
+        req = urllib.request.Request(f"https://ghcr.io/v2/{name}/manifests/{reference}",
+                                     headers={"Authorization": f"Bearer {token}", "Accept": accept})
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return json.load(r), r.headers["Docker-Content-Digest"]
+
+    top, digest = get(tag)
+    if "manifests" in top:
+        entry = next((m for m in top["manifests"]
+                      if m.get("platform", {}).get("os") == "linux" and m["platform"].get("architecture") == arch), None)
+        if entry is None:
+            raise SystemExit(f"[runtime] {ref} has no linux/{arch} image")
+        top, digest = get(entry["digest"])
+    return digest, top["config"]["digest"], top["config"]["size"] + sum(l["size"] for l in top["layers"])
+
+
 if args.check_images:
     for local, _ in IMAGES.values():
         image_id(f"{local}:{source_tag}")
@@ -172,6 +216,9 @@ if args.check_images:
 shutil.copyfile(root / "desktop" / "runtime" / "compose.yml", out / "compose.yml")
 # lite 프로필의 overlay — 앱이 lite 로 돌 때 모든 compose 호출에 얹는다(docker-stack.ts composeArgs).
 shutil.copyfile(root / "desktop" / "runtime" / "compose.lite.yml", out / "compose.lite.yml")
+# compose.yml 의 pdf2bpmn 이 마운트하는 facade — main 개발 스펙과 같은 파일 한 벌.
+(out / "pdf2bpmn").mkdir(parents=True, exist_ok=True)
+shutil.copyfile(root / "desktop" / "runtime" / "pdf2bpmn" / "facade.py", out / "pdf2bpmn" / "facade.py")
 for name, text in ENV.items():
     (out / "config" / f"{name}.env").write_text(text, encoding="utf-8")
 (out / "architect" / "app" / ".env").write_text(ARCHITECT_ENV, encoding="utf-8")
@@ -199,6 +246,9 @@ for key, (local, component) in IMAGES.items():
         sizes[key] = int(entry["size"])
     else:
         sizes[key] = image_size(f"{local}:{source_tag}")
+for key, (ref, arch) in EXTERNAL_IMAGES.items():
+    images[key] = ref
+    digests[key], ids[key], sizes[key] = registry_identity(ref, arch)
 
 # Checkouts of the repositories that are not submodules here, at the commits the images came from.
 lite_src = Path(os.environ.get("ROBO_LITE_SRC", "/Users/uengine/robo-lite-src"))
@@ -222,7 +272,7 @@ manifest = {
     "imagePull": True,
     "images": images,
     "imageIds": ids,
-    **({"imageDigests": digests} if len(digests) == len(IMAGES) else {}),
+    **({"imageDigests": digests} if len(digests) == len(IMAGES) + len(EXTERNAL_IMAGES) else {}),
     "imageSizes": sizes,
     "architect": {"python": args.python, "app": "architect/app", "entrypoint": "api.main:app"},
     "environment": environment,
@@ -239,13 +289,13 @@ manifest = {
         "gateway": head(lite_src / "api-gateway"),
     },
 }
-if digests_file and len(digests) != len(IMAGES):
-    raise SystemExit(f"[runtime] {digests_file} lists {len(digests)} of {len(IMAGES)} images")
+if digests_file and len(digests) != len(IMAGES) + len(EXTERNAL_IMAGES):
+    raise SystemExit(f"[runtime] {digests_file} lists {len(digests) - len(EXTERNAL_IMAGES)} of {len(IMAGES)} images")
 (out / "runtime-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 total = sum(sizes.values())
 print(f"[runtime] manifest: {len(images)} images, download {total / 1e9:.2f} GB"
       f"{' (pinned to pushed digests)' if digests else ' (no digests yet — pull by tag)'}")
-for k in IMAGES:
+for k in images:
     print(f"  {k:10} {images[k]}  {ids[k][:19]}  {sizes[k] / 1e6:6.0f} MB")
 PY
 }

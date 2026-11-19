@@ -5,17 +5,13 @@
 # enterprise(기본)는 이 파일을 싣지 않는다.
 #
 # ⚠ `!reset` 은 compose v2.24.4 이상이다(Docker Desktop 4.27+).
+#
+# 문서→BPMN(pdf2bpmn)은 **끄지 않는다** — lite 는 main 과 같은 스펙이다(main 개발은
+# deploy/pdf2bpmn-selfhosted 컨테이너 하나 · OpenAI gpt-4o). 이미지·`config/pdf2bpmn.env`·
+# `pdf2bpmn/facade.py` 는 lite 굽기(scripts/packaged-runtime-common.sh)가 싣는다.
+# (11-17 통합 때 여기서 꺼 두었던 것은 잘못이었다 — 0.1.5 홈에 "문서→BPMN 생성기 멈춤".)
 
 services:
-  # 문서→BPMN 은 납품판의 것이다. lite 런타임에는 이미지도 `config/pdf2bpmn.env` 도 없다.
-  # 프로필로 빼 두면 `up` 이 띄우지 않는다. env_file·마운트를 비우는 이유: 안 띄우는 서비스라도
-  # compose 가 프로젝트를 읽을 때 없는 파일을 찾다가 멈출 수 있다.
-  pdf2bpmn:
-    profiles: ["enterprise-only"]
-    image: ${ROBO_IMAGE_PDF2BPMN:-robo-disabled/pdf2bpmn:none}
-    env_file: !reset []
-    volumes: !reset []
-
   # 분석기·검색 LLM 은 이 PC 의 Claude Code 다리(`claude_code_bridge`)다. 그 설정은
   # `config/analyzer.env` 에 `ROBO_LLM_API_KEY=claude-code-bridge` 로 들어 있는데,
   # `compose.yml` 의 `environment:`(`${ROBO_LLM_API_KEY:-}`)가 env_file 을 이겨 **빈 값으로

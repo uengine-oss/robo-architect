@@ -8,10 +8,10 @@
  *                    enterprise (기본)                 lite
  * 창                 단일 창 + 런처                     탭 창(셸 홈이 런처를 대신)
  * 언어               한국어 고정                         OS 언어 / 메뉴(영어 모드)
- * 런타임 매니페스트  schema 5 · authority·pdf2bpmn ·    schema 4 도 받음 · 그 둘 없음 ·
+ * 런타임 매니페스트  schema 5 · authority·pdf2bpmn ·    schema 4 도 받음 · authority 없음 ·
  *                    graphs · 이미지 tar 필수           graphs 없으면 기본값 · tar 없이 pull
  * 모델 키            credentialNames 비면 기동 중단     경고만(Claude 브리지가 대신)
- * compose            compose.yml                        + compose.lite.yml(pdf2bpmn 끔 · 브리지 키)
+ * compose            compose.yml                        + compose.lite.yml(분석기 브리지 키)
  * 그래프 비밀번호    볼륨 값 그대로                      기동 때 graph-db 역할 비밀번호를 맞춤
  * 호스트 백엔드      AUTH_BIND_CONNECTION=true(설치본)  Claude 브리지 env · 번들 연결의 그래프 = 프로젝트
  * ```

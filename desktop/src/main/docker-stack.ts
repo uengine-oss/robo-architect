@@ -51,10 +51,13 @@ const STATE_SCHEMA_VERSION = 5;
 // 5: 중앙 DB 서버에서 실행할 authority image를 오프라인 archive 계약에 추가.
 const MANIFEST_SCHEMA_VERSION = 5;
 // lite 프로필의 런타임 빌더(`scripts/packaged-runtime-common.sh`)는 4 를 쓴다 —
-// authority·pdf2bpmn·graphs 가 없는 판이다. 그 프로필에서만 함께 받는다.
+// authority·graphs 가 없는 판이다. 그 프로필에서만 함께 받는다.
 const LITE_MANIFEST_SCHEMA_VERSIONS: readonly number[] = [4, MANIFEST_SCHEMA_VERSION];
-/** lite 런타임에 없는 이미지 — 중앙 권한 API 와 문서→BPMN 은 납품판의 것이다. */
-const LITE_OPTIONAL_IMAGES: readonly string[] = ["authority", "pdf2bpmn"];
+/**
+ * lite 런타임에 없는 이미지 — 중앙 권한 API 는 납품판의 것이다.
+ * 문서→BPMN(pdf2bpmn)은 **있다** — lite 는 main 과 같은 스펙이다(0.1.6, 2026-11-19).
+ */
+const LITE_OPTIONAL_IMAGES: readonly string[] = ["authority"];
 const DEFAULT_COMPOSE_PROJECT_NAME = "robo-architect-desktop";
 // ROBO_COMPOSE_PROJECT: a second stack next to the usual one (packaged-app test with a
 // fresh data folder — the same project name would recreate the running containers).
@@ -1074,7 +1077,7 @@ function composeEnvironment(
 
 /** 중앙 DB 모드에서 겹쳐 얹는 overlay. `compose.yml` 과 같은 자리에 있다. */
 const REMOTE_GRAPH_COMPOSE = "compose.remote-graph.yml";
-/** lite 프로필에서 겹쳐 얹는 overlay — pdf2bpmn 을 끄고 분석기 LLM 을 Claude 브리지로 둔다. */
+/** lite 프로필에서 겹쳐 얹는 overlay — 분석기 LLM 을 Claude 브리지로 둔다. */
 const LITE_COMPOSE = "compose.lite.yml";
 
 function composeArgs(
@@ -1093,7 +1096,7 @@ function composeArgs(
     files.push("--file", ensureRuntimeChild(root, REMOTE_GRAPH_COMPOSE, "remoteGraphCompose"));
   }
   if (isLiteProfile()) {
-    // 이것도 **모든 호출에** 실린다 — 빠진 호출은 pdf2bpmn 이 있다고 보고 그 env_file 을 찾는다.
+    // 이것도 **모든 호출에** 실린다 — 빠진 호출은 분석기 키 기본값이 달라진다.
     files.push("--file", ensureRuntimeChild(root, LITE_COMPOSE, "liteCompose"));
   }
   return ["compose", "--project-name", COMPOSE_PROJECT_NAME, ...files, ...command];
@@ -1164,7 +1167,7 @@ export async function startDockerStack(onProgress?: ProgressListener): Promise<D
   // 폴백으로 내려가는데 **그게 눈에 안 띈다** — 화면에는 그대로 BPM 이 나온다.
   // (폴백 품질이 실제로 얼마나 나쁜지는 아직 안 쟀다.)
   // `load_dotenv()` 는 기본이 override=False 라 여기서 준 값이 번들 .env 를 이긴다.
-  // lite 런타임에는 pdf2bpmn 이 없다(compose.lite.yml 이 끈다) — 빈 포트를 가리키게 두지 않는다.
+  // 매니페스트에 pdf2bpmn 이 없는 런타임(옛 lite)이면 빈 포트를 가리키게 두지 않는다.
   if (manifest.images.pdf2bpmn) {
     process.env.PDF2BPMN_FACADE_URL = `http://127.0.0.1:${state.ports.pdf2bpmn}`;
   }
