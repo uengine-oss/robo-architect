@@ -113,6 +113,17 @@ PARSER_REPAIR_AGENT_ENABLED=false
     "gateway": "",
 }
 
+# The analyzer checks a sealed capability file for its LLM before every run (run_executor preflight)
+# and refuses the run when the two values are missing — with the claude_code_bridge config above,
+# every legacy analysis would stop before it starts. The file ships in the analyzer image; its hash
+# is read from the submodule the image is built from, so the two cannot drift apart.
+CAPABILITIES_REF = "llm/capabilities/claude_code_bridge.yaml"
+_capabilities = root / "robo-analyzer" / "robo-data-analyzer" / CAPABILITIES_REF
+if not _capabilities.is_file():
+    raise SystemExit(f"[runtime] no {_capabilities} — the analyzer submodule is missing or too old")
+ENV["analyzer"] += (f"ROBO_LLM_MODEL_RUNTIME_CAPABILITIES_REF={CAPABILITIES_REF}\n"
+                    f"ROBO_LLM_MODEL_RUNTIME_CAPABILITIES_SHA256={hashlib.sha256(_capabilities.read_bytes()).hexdigest()}\n")
+
 # The host Architect API's settings (api/main.py load_dotenv). Proposals, plans and implementation
 # run as skills through the local Claude Code CLI; Neo4j/Bolt settings come from the app at start.
 ARCHITECT_ENV = """# Robo Architect Lite — host Architect API settings (no secrets).
