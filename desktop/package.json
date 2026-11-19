@@ -1,6 +1,6 @@
 {
   "name": "robo-architect-desktop",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "private": true,
   "description": "Robo-Architect desktop app (Electron shell + host Architect API + Docker stack on Ontological DB). Profiles: enterprise (default) · lite (electron-builder.lite.js).",
   "author": "uEngine",
