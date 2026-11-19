@@ -27,10 +27,16 @@ Get the file from the [latest release](https://github.com/uengine-oss/robo-archi
   that the app starts and stops itself (about 2 GB of memory while idle). On Windows, use the default
   WSL 2 backend (Linux containers).
 - **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)** installed and signed in (`claude`
-  in a terminal works). Proposals, plans, implementation and the legacy analyzer's language model all
-  go through it — no API key is needed. On Windows, Claude Code needs
+  in a terminal works). The app's language model runs on it — proposals, plans, implementation, the
+  legacy analyzer, document ingestion and wireframes — so no API key is needed. The home screen shows
+  which Claude account the app runs on. On Windows, Claude Code needs
   [Git for Windows](https://git-scm.com/downloads/win).
 - About 6 GB of free disk space.
+- Optional: an **OpenAI API key**. Without it everything above works; with it, the data catalog also
+  writes table descriptions and infers foreign keys, and requirement mapping uses embeddings. The home
+  screen's **AI key** row says how to set it (macOS: `launchctl setenv OPENAI_API_KEY <key>`; Windows:
+  `setx OPENAI_API_KEY <key>`), then reopen the app.
+- Optional: the **Figma desktop app**, for the Figma plugin (below).
 
 ## First launch
 
@@ -50,6 +56,15 @@ Get the file from the [latest release](https://github.com/uengine-oss/robo-archi
   `~/Library/Application Support/Robo Architect Lite` (Windows: `%APPDATA%\Robo Architect Lite`), the graphs in a Docker volume of the
   `robo-architect-desktop` Compose project.
 - **Language**: the app follows your OS language (English or Korean).
+- **Logs**: `logs/desktop-YYYY-MM-DD.log` in the settings folder above (the app's **Log folder** link opens it).
+
+## Figma plugin
+
+The plugin comes with the app. In the **Figma document link** dialog, click **Open plugin folder**: the app
+puts `manifest.json` and `dist/plugin.js` in its settings folder (`…/Robo Architect Lite/figma-plugin`) and
+opens it. In the Figma desktop app, choose **Plugins › Development › Import plugin from manifest…** and pick
+that `manifest.json`, then run **RoboArchitect Sync** and connect it to the backend address the dialog shows.
+The folder survives app updates and is refreshed each time you open it, so the plugin follows the app.
 
 ## Contact
 
