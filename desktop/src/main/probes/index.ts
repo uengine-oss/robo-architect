@@ -355,7 +355,9 @@ const PROBES: Partial<Record<ManagedServiceId, ProbePair>> = {
   parser: parserProbes,
   pdf2bpmn: pdf2bpmnProbes,
   wireframe: wireframeProbes,
-  catalog: { health: containerHealth("catalog", "http://127.0.0.1:5503/robo/check-data/") },
+  // `/health` — `/robo/check-data/` 는 그래프 전체를 훑어 잠근다. 5초마다 부르면 분석기가 결과를
+  // 바꿔 쓰는 순간과 교착이 난다(lite 0.1.7 · 2026-11-19). compose.yml 의 catalog 헬스체크와 같은 이유.
+  catalog: { health: containerHealth("catalog", "http://127.0.0.1:5503/health") },
   // ⚠ 2026-10-27: `mindsdb` 프로브를 뺐다. 이 표의 열쇠가 곧 **앱이 감독하는
   //   서비스 목록**이다(`probedServiceIds()` → `runtimeRegistry.register`).
   //   compose 에서 서비스를 지우고 여기를 안 지우면, 앱은 **영영 안 뜨는
