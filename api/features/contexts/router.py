@@ -154,7 +154,7 @@ async def patch_bc_classification(
 
 
 @router.get("")
-async def get_all_contexts(request: Request) -> list[dict[str, Any]]:
+def get_all_contexts(request: Request) -> list[dict[str, Any]]:
     """
     GET /api/contexts - BC 목록 조회
     Returns all Bounded Contexts with basic info.
@@ -196,7 +196,7 @@ async def get_all_contexts(request: Request) -> list[dict[str, Any]]:
 
 
 @router.get("/{context_id}/tree")
-async def get_context_tree(context_id: str, request: Request) -> dict[str, Any]:
+def get_context_tree(context_id: str, request: Request) -> dict[str, Any]:
     """
     GET /api/contexts/{id}/tree - BC 하위 트리
     Returns the full tree structure under a Bounded Context.
@@ -288,7 +288,7 @@ async def get_context_tree(context_id: str, request: Request) -> dict[str, Any]:
 
 
 @router.get("/{context_id}/full-tree")
-async def get_context_full_tree(context_id: str, request: Request) -> dict[str, Any]:
+def get_context_full_tree(context_id: str, request: Request) -> dict[str, Any]:
     """
     GET /api/contexts/{id}/full-tree - BC 하위 전체 트리 (정규화된 구조)
     """

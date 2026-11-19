@@ -640,7 +640,7 @@ async def list_sessions(request: Request) -> list[dict[str, Any]]:
 
 
 @router.get("/runs")
-async def ingestion_runs(request: Request) -> dict[str, Any]:
+def ingestion_runs(request: Request) -> dict[str, Any]:
     """이 프로젝트에서 **지금 돌고 있는 적재**와 **중단된 적재**.
 
     화면이 프로젝트를 열 때마다 묻는다. 중단 판정은 박동이 한다(`runs.py`).

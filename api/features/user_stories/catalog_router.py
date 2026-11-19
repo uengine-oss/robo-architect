@@ -55,7 +55,7 @@ async def get_all_user_stories(request: Request) -> list[dict[str, Any]]:
 
 
 @router.get("/unassigned")
-async def get_unassigned_user_stories(request: Request) -> list[dict[str, Any]]:
+def get_unassigned_user_stories(request: Request) -> list[dict[str, Any]]:
     """
     GET /api/user-stories/unassigned - BC에 할당되지 않은 User Story 조회
     """

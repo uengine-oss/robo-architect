@@ -103,7 +103,7 @@ async def create_proposal(body: CreateProposalRequest, request: Request):
 # ---------------------------------------------------------------------------
 
 @router.get("/", response_model=list[ProposalResponse])
-async def list_proposals(
+def list_proposals(
     request: Request,
     status: Optional[list[str]] = Query(default=None),
     author: Optional[str] = Query(default=None),
@@ -143,7 +143,7 @@ async def list_proposals(
 # ---------------------------------------------------------------------------
 
 @router.get("/{proposal_id}", response_model=ProposalResponse)
-async def get_proposal(proposal_id: str, request: Request):
+def get_proposal(proposal_id: str, request: Request):
     """Proposal 단건 조회 (EFFECT 포함)."""
     query = """
     MATCH (p:Proposal {id: $id})

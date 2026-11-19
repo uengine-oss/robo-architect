@@ -67,7 +67,7 @@ def _guard(fn, *args, **kwargs):
 
 
 @router.get("")
-async def list_projects(request: Request) -> dict:
+def list_projects(request: Request) -> dict:
     uid = _uid(request)
     store.ensure_schema()
     return {"projects": _guard(store.list_projects, uid)}
