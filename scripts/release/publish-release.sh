@@ -61,7 +61,7 @@ Robo Architect Lite $VERSION for macOS (Apple Silicon) and Windows 10/11 (x64).
 - Windows: \`$WIN_ASSET\` below — run the installer. It installs per user; no administrator rights are needed.
 
 **Requirements:** Docker Desktop (running) and Claude Code (installed and signed in). The first launch
-downloads the stack's Docker images, about 1.2 GB (about 5 GB on disk); the home screen shows the progress.
+downloads the stack's Docker images, about 2 GB (about 6 GB on disk); the home screen shows the progress.
 
 **First launch:** the app is not notarized or code-signed yet. On macOS, when it says it could not verify
 the app, open System Settings › Privacy & Security and click **Open Anyway**. On Windows, when "Windows
@@ -88,7 +88,12 @@ version = sys.argv[2]
 problems = []
 if not m.get("imagePull"):
     problems.append("imagePull is not set")
+# Public images the release uses as they are (scripts/packaged-runtime-common.sh EXTERNAL_IMAGES):
+# not re-pushed under robo-architect-lite-*, still pinned to a digest below.
+EXTERNAL = {"pdf2bpmn": "ghcr.io/uengine-oss/process-gpt-bpmn-extractor:"}
 for key, ref in m["images"].items():
+    if key in EXTERNAL and ref.startswith(EXTERNAL[key]):
+        continue
     if not ref.startswith("ghcr.io/uengine-oss/robo-architect-lite-") or not ref.endswith(f":{version}"):
         problems.append(f"{key}: {ref}")
 if len(m.get("imageDigests", {})) != len(m["images"]):
