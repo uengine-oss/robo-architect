@@ -67,11 +67,49 @@ function dispatch(reason) {
   window.dispatchEvent(new CustomEvent(EVENT, { detail: { reason } }))
 }
 
+/**
+ * 남의 변경은 **짧게 모았다가 한 번** 다시 읽는다.
+ *
+ * 남이 쓰면 보고 있던 창이 모두 같은 순간에 navigator 전체(contexts · BC 마다 full-tree …)를
+ * 다시 읽는다. 창 20개면 같은 요청 100개가 한꺼번에 서버에 간다 — 포스코 로컬 측정(2026-11-19)
+ * 5초마다 쓰기 한 번에 다시 읽기 p95 933ms. AI 채팅처럼 몇 번을 잇달아 쓰면 그 수만큼 또 읽는다.
+ *
+ * 그래서 남의 변경(`remote-change*`)은 첫 신호에서 `REMOTE_COALESCE_MS` + 창마다 다른 지연
+ * (`REMOTE_JITTER_MS` 안)만큼 기다렸다가 한 번 보낸다. 그 사이 온 신호는 같이 묶인다.
+ * 내 변경(인제스천 완료 · 지움 …)은 그대로 즉시 보낸다.
+ */
+const REMOTE_COALESCE_MS = 300
+const REMOTE_JITTER_MS = 500
+let remoteTimer = null
+let remoteReason = null
+
+function scheduleRemote(reason) {
+  // 'remote-change' 가 하나라도 있으면 그것으로 보낸다 — 편집 중 미루기는 그 이유에만 걸린다.
+  if (remoteReason !== 'remote-change') remoteReason = reason
+  if (remoteTimer) return
+  const delay = REMOTE_COALESCE_MS + Math.floor(Math.random() * REMOTE_JITTER_MS)
+  remoteTimer = setTimeout(() => {
+    remoteTimer = null
+    const r = remoteReason
+    remoteReason = null
+    // 기다리는 사이 편집을 시작했으면 미룬다(손을 떼면 그때 보낸다).
+    if (r === 'remote-change' && holds > 0) {
+      deferred = r
+      return
+    }
+    dispatch(r)
+  }, delay)
+}
+
 /** Announce that graph data changed. `reason`: 'ingestion-complete' | 'cleared' | 'remote-change'. */
 export function emitDataChanged(reason = 'unknown') {
   // 남이 바꾼 것만 미룬다. 내가 방금 인제스천을 끝냈으면 지금 보는 게 맞다.
   if (reason === 'remote-change' && holds > 0) {
     deferred = reason
+    return
+  }
+  if (typeof reason === 'string' && reason.startsWith('remote-change')) {
+    scheduleRemote(reason)
     return
   }
   dispatch(reason)
