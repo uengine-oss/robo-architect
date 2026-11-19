@@ -178,8 +178,10 @@ function reloadAfterClear() {
           <UserAdminSection v-if="auth.isAdmin" />
 
           <!-- AI 호출 경로 — 어느 갈래가 사내 게이트웨이로 갔고 어느 갈래가
-               못 갔는지. 관리자에게만 보인다(운영 설정이다). -->
-          <AiRoutingSection v-if="auth.isAdmin" />
+               못 갔는지. 관리자에게만 보인다(운영 설정이다).
+               인증을 강제하지 않는 판(lite — 이 PC 의 한 사람)에는 관리자가 따로 없으므로
+               그 사람에게 보인다. 안 그러면 lite 에서는 아무도 못 본다(0.1.5 설치본, 2026-11-19). -->
+          <AiRoutingSection v-if="auth.isAdmin || auth.enforcement === 'off'" />
 
           <!-- Domain Terminology (Ubiquitous Language) Setting -->
           <div class="settings-section">
