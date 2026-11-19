@@ -25,10 +25,13 @@
 #
 # ## 이미지 — 전부 GHCR, 전부 고정 태그(latest 없음)
 #
-#   ghcr.io/uengine-oss/robo-posco-*     열한 장
-#     납품판 아홉 장 :0.1.0-wde10ff6c-…-rdel-swp
-#                   납품 robo-images.tar 를 **그대로** 올렸다 → image ID 가 납품 매니페스트와 같다
-#     새 둘         :posco-web-<sha7> — CI 가 굽는다(architect-api · web)
+#   ghcr.io/uengine-oss/robo-posco-*     열한 장 — **전부 :delivery** (2026-11-19 밤부터)
+#     CI 가 main 에서 굽는 넷   web · architect-api · analyzer · authority(+authority-init)
+#                               (불변 태그 :posco-web-<sha7> 도 같이 — 되돌리기·대조용)
+#     태그만 옮긴 일곱          graph-db · graph-bolt · fabric · catalog · parser · gateway · wireframe
+#                               납품판 0.1.0-wde10ff6c-…-rdel-swp 이미지 그대로(코드가 각 main 과 같다 · 11-18 실측)
+#                               → image ID 가 납품 매니페스트와 같다. 각 저장소 CI 로 굽는 일은 그 뒤에.
+#   "지금 무엇이 올라와 있나" 는 태그가 아니라 라벨 org.opencontainers.image.revision 으로 본다.
 #
 # ## pdf2bpmn(문서→BPMN)은 **빼 두었다** — 2026-11-11
 #
@@ -212,7 +215,7 @@ services:
 
   # ── 권한 서버 — 로그인(SWP)·승인·프로젝트 공유 ─────────────────────────
   authority:
-    image: ghcr.io/uengine-oss/robo-posco-authority:0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp
+    image: ghcr.io/uengine-oss/robo-posco-authority:delivery
     restart: unless-stopped
     labels: *labels
     environment: &authority-env
@@ -248,7 +251,7 @@ services:
   #   역할 둘 → migrate → grant(관리자 사번) → policy
   # 소유자 자격(ROBO_GRAPH_PASSWORD)은 **이 컨테이너에만** 들어간다.
   authority-init:
-    image: ghcr.io/uengine-oss/robo-posco-authority:0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp
+    image: ghcr.io/uengine-oss/robo-posco-authority:delivery
     restart: "no"
     labels: *labels
     environment:
@@ -266,7 +269,7 @@ services:
 
   # ── 그래프 저장소 — Ontological(PostgreSQL) + Bolt 게이트웨이 ─────────
   graph-db:
-    image: ghcr.io/uengine-oss/robo-posco-graph-db:0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp
+    image: ghcr.io/uengine-oss/robo-posco-graph-db:delivery
     restart: unless-stopped
     labels: *labels
     environment:
@@ -287,7 +290,7 @@ services:
       start_period: 20s
 
   graph-bolt:
-    image: ghcr.io/uengine-oss/robo-posco-graph-bolt:0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp
+    image: ghcr.io/uengine-oss/robo-posco-graph-bolt:delivery
     restart: unless-stopped
     labels: *labels
     environment:
@@ -310,7 +313,7 @@ services:
 
   # ── 레거시 분석 — fabric · catalog · analyzer · parser · gateway ──────
   fabric:
-    image: ghcr.io/uengine-oss/robo-posco-fabric:0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp
+    image: ghcr.io/uengine-oss/robo-posco-fabric:delivery
     restart: unless-stopped
     labels: *labels
     environment:
@@ -332,7 +335,7 @@ services:
       start_period: 10s
 
   catalog:
-    image: ghcr.io/uengine-oss/robo-posco-catalog:0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp
+    image: ghcr.io/uengine-oss/robo-posco-catalog:delivery
     restart: unless-stopped
     labels: *labels
     environment:
@@ -470,7 +473,7 @@ services:
       start_period: 15s
 
   parser:
-    image: ghcr.io/uengine-oss/robo-posco-parser:0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp
+    image: ghcr.io/uengine-oss/robo-posco-parser:delivery
     restart: unless-stopped
     labels: *labels
     mem_limit: ${ROBO_MEM_PARSER:-0}
@@ -491,7 +494,7 @@ services:
       start_period: 30s
 
   gateway:
-    image: ghcr.io/uengine-oss/robo-posco-gateway:0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp
+    image: ghcr.io/uengine-oss/robo-posco-gateway:delivery
     restart: unless-stopped
     labels: *labels
     mem_limit: ${ROBO_MEM_GATEWAY:-0}
@@ -520,7 +523,7 @@ services:
 
   # ── 와이어프레임 렌더러 ─────────────────────────────────────────────────
   wireframe:
-    image: ghcr.io/uengine-oss/robo-posco-wireframe:0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp
+    image: ghcr.io/uengine-oss/robo-posco-wireframe:delivery
     restart: unless-stopped
     labels: *labels
     environment:

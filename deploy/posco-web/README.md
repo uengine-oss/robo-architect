@@ -128,21 +128,18 @@ DB 서버는 5432 · 7687 · 59020 을 `ROBO_DB_SERVER_IP` 에 연다. **AP 서�
 msa-ez 는 비밀을 yml 에 바로 적는다. 여기서는 그러지 않는다 — yml 은 저장소에 들어가고,
 비밀은 `.env`(600) 에만 둔다. 화면에서 고치는 방식은 같다(파일 하나를 연다).
 
-## 이미지 — 열한 장 전부 GHCR(`robo-posco-*`) · 전부 고정 태그
+## 이미지 — 열한 장 전부 GHCR(`robo-posco-*`) · 전부 `:delivery` (2026-11-19 밤부터)
 
 | 서비스 | 이미지 (`ghcr.io/uengine-oss/…`) | 태그 | 출처 |
 |---|---|---|---|
-| graph-db | `robo-posco-graph-db` | `0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp` | 납품판 그대로 |
-| graph-bolt | `robo-posco-graph-bolt` | 〃 | 〃 |
-| authority (+init) | `robo-posco-authority` | 〃 | 〃 |
-| analyzer | `robo-posco-analyzer` | `delivery` | posco-web CI 가 서브모듈 핀으로 굽는다(2026-11-17 부터) |
-| catalog | `robo-posco-catalog` | 〃 | 〃 |
-| fabric | `robo-posco-fabric` | 〃 | 〃 |
-| parser | `robo-posco-parser` | 〃 | 〃 |
-| gateway | `robo-posco-gateway` | 〃 | 〃 |
-| wireframe | `robo-posco-wireframe` | 〃 | 〃 |
-| architect-api | `robo-posco-architect-api` | `posco-web-<sha7>` | CI 가 굽는다 |
-| web (nginx) | `robo-posco-web` | `posco-web-<sha7>` | CI 가 굽는다 |
+| web (nginx) | `robo-posco-web` | `delivery` (+ 불변 `posco-web-<sha7>`) | CI 가 main 에서 굽는다 |
+| architect-api | `robo-posco-architect-api` | 〃 | 〃 |
+| analyzer | `robo-posco-analyzer` | 〃 | 〃 (서브모듈 핀 · 2026-11-17 부터) |
+| authority (+init) | `robo-posco-authority` | 〃 | 〃 (2026-11-19 부터 · api 전체 · `CUSTOMER=posco`) |
+| graph-db · graph-bolt | `robo-posco-graph-db` · `-graph-bolt` | `delivery` | 납품판 `0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp` 이미지에 태그만 옮김 |
+| catalog · fabric · parser · gateway · wireframe | `robo-posco-*` | `delivery` | 〃 (코드가 각 저장소 main 과 같다 · 11-18 실측) |
+
+어느 커밋이 올라와 있나는 라벨 `org.opencontainers.image.revision` 으로 본다(운영-업데이트-가이드 §5).
 
 - 납품판 아홉 장은 **다시 굽지 않고** 납품 `robo-images.tar` 의 이미지를 그대로 올렸다
   (2026-11-10). 같은 커밋이라도 다시 구우면 image ID 가 달라져 납품 매니페스트와 대조가 끊긴다.

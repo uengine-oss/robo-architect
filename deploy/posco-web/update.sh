@@ -30,7 +30,9 @@ TAG=${1:?usage: bash update.sh <release-tag> [asset] | --no-images}
 ASSET=${2:-images.tar}
 # load 로 덮인 장은 강제로 다시 만든다. web 은 언제나 마지막에 다시(옛 IP).
 # analyzer 도 묶음에 들어간다(2026-11-17~) — 빼면 podman 이 옛 analyzer 를 그대로 돌린다.
-if [[ $TAG == --no-images ]]; then FORCE=${FORCE:-web}; else FORCE=${FORCE:-"architect-api analyzer web"}; fi
+# load 로 같은 태그(:delivery)를 덮은 장 — podman 은 그 컨테이너를 스스로 안 바꾼다. CI 가 main 에서 굽는 넷.
+# (일곱 장은 태그만 옮긴 납품판이라 내용이 안 바뀐다 · authority 는 2026-11-19 부터 CI 가 굽는다)
+if [[ $TAG == --no-images ]]; then FORCE=${FORCE:-web}; else FORCE=${FORCE:-"architect-api analyzer authority web"}; fi
 
 health() {  # podman 판마다 필드 이름이 다르다
   sudo docker inspect "$1" --format '{{.State.Health.Status}}' 2>/dev/null ||

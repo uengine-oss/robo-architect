@@ -14,7 +14,11 @@ publish-images.ps1 — **인터넷 되는 PC 에서** CI 가 구운 이미지를
 #>
 param(
   [Parameter(Mandatory)][string]$Tag,
-  [string[]]$Images = @('robo-posco-web:delivery', 'robo-posco-architect-api:delivery', 'robo-posco-analyzer:delivery'),
+  # 열한 장 전부 :delivery (2026-11-19 밤부터 — compose 가 열한 장 모두 :delivery 를 본다)
+  [string[]]$Images = @('robo-posco-web:delivery', 'robo-posco-architect-api:delivery', 'robo-posco-analyzer:delivery',
+                        'robo-posco-authority:delivery', 'robo-posco-graph-db:delivery', 'robo-posco-graph-bolt:delivery',
+                        'robo-posco-fabric:delivery', 'robo-posco-catalog:delivery', 'robo-posco-parser:delivery',
+                        'robo-posco-gateway:delivery', 'robo-posco-wireframe:delivery'),
   [string]$Asset = 'images.tar',
   [string]$Repo = 'uengine-oss/robo-architect',
   [switch]$DryRun
