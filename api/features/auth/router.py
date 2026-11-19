@@ -116,6 +116,7 @@ async def get_provider() -> dict:
     설정되므로, 한 번에 확인할 수 있어야 현장에서 오설정을 빨리 잡는다.
     """
     provider = auth_provider()
+    enforced = auth_enforced()
     payload: dict = {
         "provider": provider.value,
         "enterprise": provider is not AuthProvider.NONE,
@@ -127,12 +128,15 @@ async def get_provider() -> dict:
         # 우회로가 열려 있으면 진단에서 바로 보여야 한다. 조용히 열린 채로 두는
         # 것이 이 기능의 유일한 실패 방식이다.
         "devLogin": describe_dev_login(),
-        "approvalRequired": accounts.approval_enabled(),
+        # 인증을 안 쓰는 판(provider none · 강제 안 함 — lite)에는 계정 스키마(app_auth_policy)가
+        # 없다. 거기서 읽으면 UndefinedTable 500 이고, 화면은 "인증 설정을 확인하는 중" 에서
+        # 영영 못 넘어간다(lite 0.1.5 설치본, 2026-11-19). 승인제도 인증이 있어야 뜻이 있다.
+        "approvalRequired": accounts.approval_enabled() if (enforced or provider is not AuthProvider.NONE) else False,
         "jwtSecretConfigured": jwt_secret_configured(),
         "sessionTtlSeconds": token_ttl_seconds(),
         # 화면이 로그인 게이트를 걸지 말지 정하는 값. 서버가 강제하지 않는데
         # 화면만 막으면 쓰던 사람이 갑자기 못 들어온다.
-        "enforce": auth_enforced(),
+        "enforce": enforced,
         "bindConnection": binding_enabled(),
     }
 
