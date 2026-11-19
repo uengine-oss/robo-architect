@@ -44,6 +44,26 @@
     </div>
 
     <!-- Tabs -->
+    <!-- lite L-4 — 이 proposal 의 Intent 분해가 돌고 있다(다른 화면에 갔다 와도 여기서 이어 본다).
+         재생성을 이 화면에서 시작했으면 피드백 상자 안 로그가 보이므로 겹쳐 띄우지 않는다. -->
+    <div v-if="intentRunningHere && !regenerating" class="intent-running" data-testid="intent-running">
+      <div class="intent-running__head">
+        <span class="spinner spinner--sm" />
+        <span>{{ intentPhaseText || t('proposals.create.analyzingMsg') }}</span>
+        <button @click="store.stopIntent()" class="btn btn--secondary btn--sm">{{ t('proposals.create.stopAnalysis') }}</button>
+      </div>
+      <div class="stream-log">
+        <div
+          v-for="(line, i) in store.intentStream.logLines"
+          :key="i"
+          :class="['stream-log__line', logLineClass(line)]"
+        >{{ line }}</div>
+        <div v-if="!store.intentStream.logLines?.length" class="stream-log__waiting">
+          {{ t('proposals.create.waitingAnalysis') }}
+        </div>
+      </div>
+    </div>
+
     <div class="detail-tabs">
       <button
         v-for="tab in availableTabs"
@@ -564,6 +584,16 @@ watch(() => props.proposalId, () => {
   intentStageTab.value = 'STRATEGIC_DESIGN'
   planStageTab.value = 'PLAN_STAGE'
 })
+
+// lite L-4 — 상세를 열 때(또는 다른 proposal 로 바꿀 때) 서버에서 분해가 돌고 있으면 다시 붙는다.
+const intentRunningHere = computed(() =>
+  store.intentStream.active && store.intentStream.proposalId === props.proposalId)
+const intentPhaseText = computed(() => {
+  const evts = store.intentStream.events || []
+  for (let i = evts.length - 1; i >= 0; i--) if (evts[i].type === 'phase') return evts[i].data?.message || ''
+  return ''
+})
+watch(() => props.proposalId, (id) => { store.resumeIntentIfRunning(id) }, { immediate: true })
 watch(showStrategicHistoryTabs, (visible) => {
   if (visible) intentStageTab.value = 'STRATEGIC_DESIGN'
 })
@@ -639,6 +669,11 @@ function formatDate(dt) {
 .feedback-box label { display: block; font-size: 12px; font-weight: 600; color: var(--color-text); margin-bottom: 6px; }
 .feedback-box__textarea { width: 100%; resize: vertical; font-size: 13px; border: 1px solid var(--color-border); border-radius: 4px; padding: 6px; background: var(--color-bg); color: var(--color-text); box-sizing: border-box; }
 .feedback-box__actions { margin-top: 8px; }
+.intent-running { margin: 8px 0 12px; }
+.intent-running__head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 13px; }
+.intent-running__head .btn { margin-left: auto; }
+.intent-running__head .spinner { width: 10px; height: 10px; border: 2px solid var(--color-border); border-top-color: var(--color-accent); border-radius: 50%; animation: intent-spin 0.8s linear infinite; flex-shrink: 0; }
+@keyframes intent-spin { to { transform: rotate(360deg); } }
 .stream-log { margin-top: 10px; background: #0f172a; border-radius: 6px; padding: 10px 12px; max-height: 240px; overflow-y: auto; font-family: monospace; font-size: 11px; color: #cbd5e1; }
 .stream-log__line { padding: 1px 0; white-space: pre-wrap; word-break: break-all; line-height: 1.5; }
 .stream-log__line--tag { color: #86efac; font-weight: 600; }

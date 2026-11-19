@@ -176,3 +176,63 @@ test.describe('⑬ 단계 탭 집계 — 진행중 + 지난 단계', () => {
     await expect(page.locator('.detail-tabs')).toBeVisible()
   })
 })
+
+test.describe('lite L-4 — Intent 분해를 다른 화면에 갔다 와도 되찾는다', () => {
+  const sse = (events: Array<[string, unknown]>) =>
+    events.map(([e, d]) => `event: ${e}\ndata: ${JSON.stringify(d)}\n\n`).join('')
+
+  test('상세를 열면 돌고 있는 분해에 attach 로 붙고, 끊기면 다시 붙어 끝을 받는다(작업은 새로 시작하지 않는다)', async ({ page }) => {
+    await mockApi(page, [proposal('PRO-001', 'DRAFT')])
+    let running = true
+    const calls: string[] = []
+    let release!: () => void
+    const held = new Promise<void>((r) => { release = r })
+    await page.route('**/api/proposals/stream/PRO-001/intent**', async (route) => {
+      const url = new URL(route.request().url())
+      calls.push(`${route.request().method()} ${url.pathname}${url.search}`)
+      if (url.pathname.endsWith('/status')) {
+        return route.fulfill({ json: { running, finished: !running, cancelled: false, events: 2, lastEvent: 'log_line' } })
+      }
+      const attachCount = calls.filter((c) => c.includes('attach=true')).length
+      if (attachCount === 1) {
+        // 첫 연결 — 진행 중인 로그만 주고 끊긴다(셸 탭 · 네트워크)
+        return route.fulfill({ contentType: 'text/event-stream',
+          body: sse([['phase', { message: '자연어 인텐트 분해 중...' }], ['log_line', { text: '첫 줄' }]]) })
+      }
+      await held
+      running = false
+      return route.fulfill({ contentType: 'text/event-stream',
+        body: sse([['phase', { message: '자연어 인텐트 분해 중...' }], ['log_line', { text: '첫 줄' }],
+          ['log_line', { text: '둘째 줄' }], ['done', { proposalId: 'PRO-001', status: 'DRAFT' }]]) })
+    })
+
+    await open(page)
+    await page.locator('.proposal-item').first().click()
+    const box = page.getByTestId('intent-running')
+    await expect(box).toBeVisible()
+    await expect(box).toContainText('첫 줄')
+    await expect(page.getByTestId('intent-running-badge')).toBeVisible()
+
+    // 끊긴 뒤 상태를 다시 읽고 다시 붙는다
+    await expect.poll(() => calls.filter((c) => c.includes('attach=true')).length, { timeout: 5000 }).toBe(2)
+    release()
+    await expect(box).toHaveCount(0)
+    await expect(page.getByTestId('intent-running-badge')).toHaveCount(0)
+    expect(calls.filter((c) => c.startsWith('GET') && c.endsWith('/intent'))).toEqual([])  // 새로 시작하지 않았다
+  })
+
+  test('돌고 있는 분해가 없으면 붙지 않는다', async ({ page }) => {
+    await mockApi(page, [proposal('PRO-001', 'DRAFT')])
+    const calls: string[] = []
+    await page.route('**/api/proposals/stream/PRO-001/intent**', async (route) => {
+      const url = new URL(route.request().url())
+      calls.push(`${url.pathname}${url.search}`)
+      return route.fulfill({ json: { running: false, finished: false, cancelled: false, events: 0, lastEvent: null } })
+    })
+    await open(page)
+    await page.locator('.proposal-item').first().click()
+    await expect.poll(() => calls.length).toBe(1)
+    await expect(page.getByTestId('intent-running')).toHaveCount(0)
+    expect(calls[0]).toMatch(/\/status$/)
+  })
+})

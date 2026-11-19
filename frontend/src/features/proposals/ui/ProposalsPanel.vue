@@ -62,7 +62,12 @@
               ⛓{{ legacyReferenceCount(p.legacyReferences) }}
             </span>
             <span
-              v-if="activityById[p.id]"
+              v-if="store.intentStream.active && store.intentStream.proposalId === p.id"
+              class="active-indicator active-indicator--running"
+              data-testid="intent-running-badge"
+            ><span class="spinner" />{{ t('proposals.panel.intentRunning') }}</span>
+            <span
+              v-else-if="activityById[p.id]"
               :class="['active-indicator', `active-indicator--${activityById[p.id].tone}`]"
             >
               <span v-if="activityById[p.id].spinner" class="spinner" />{{ activityById[p.id].label }}

@@ -132,9 +132,20 @@ export const useProposalsStore = defineStore('proposals', () => {
   // Intent SSE
   // ---------------------------------------------------------------------------
 
-  function subscribeToIntent(proposalId) {
-    intentStream.value = { active: true, events: [], clarificationQuestions: null, toolLogs: [], logLines: [] }
-    const es = openEventSource(`${BASE}/stream/${proposalId}/intent`)
+  // lite L-4 (2026-11-19) — 분해는 서버에서 연결과 떨어져 돈다(detached_runs).
+  // 연결이 끊기면(창 탭 · 새로 고침 · 네트워크) 상태를 다시 읽고, 아직 돌고 있으면 attach 로 다시 붙는다
+  // (명확화와 같은 방식, ce22696). attach 는 작업을 새로 시작하지 않고 처음부터 다시 받는다.
+  const INTENT_REATTACH_MAX = 10
+
+  function subscribeToIntent(proposalId, { attach = false, attempt = 0 } = {}) {
+    if (_intentEs) { try { _intentEs.close() } catch { /* noop */ } _intentEs = null }
+    intentStream.value = {
+      proposalId, active: true, events: [], clarificationQuestions: null, toolLogs: [], logLines: [],
+    }
+    const url = `${BASE}/stream/${proposalId}/intent${attach ? '?attach=true' : ''}`
+    const es = openEventSource(url)
+    let settled = false
+    const mine = () => _intentEs === es
 
     const handlers = {
       phase: (data) => intentStream.value.events.push({ type: 'phase', data }),
@@ -169,15 +180,27 @@ export const useProposalsStore = defineStore('proposals', () => {
         }
       },
       done: (data) => {
+        settled = true
         intentStream.value.active = false
         intentStream.value.events.push({ type: 'done', data })
         es.close()
+        if (mine()) _intentEs = null
         fetchProposal(proposalId)
       },
       error: (data) => {
+        settled = true
         intentStream.value.active = false
         intentStream.value.error = data.message
         es.close()
+        if (mine()) _intentEs = null
+      },
+      // attach 했는데 서버에 분해가 없다(끝난 지 오래 · 서버 재시작) — 저장된 결과를 다시 읽는다.
+      idle: () => {
+        settled = true
+        intentStream.value.active = false
+        es.close()
+        if (mine()) _intentEs = null
+        fetchProposal(proposalId)
       },
     }
 
@@ -187,22 +210,58 @@ export const useProposalsStore = defineStore('proposals', () => {
       })
     })
 
-    es.onerror = () => {
-      intentStream.value.active = false
+    es.onerror = async () => {
       es.close()
+      if (settled || !mine()) return
       _intentEs = null
+      const st = await fetchIntentRunStatus(proposalId)
+      // 그 사이 다른 구독이 시작됐으면(사용자가 다시 돌림) 손대지 않는다.
+      if (_intentEs) return
+      if (st && (st.running || st.finished) && attempt < INTENT_REATTACH_MAX) {
+        setTimeout(() => {
+          if (!_intentEs) subscribeToIntent(proposalId, { attach: true, attempt: attempt + 1 })
+        }, 1000)
+        return
+      }
+      intentStream.value.active = false
+      if (!st) intentStream.value.error = '분해 진행 상황을 다시 불러오지 못했습니다.'
+      fetchProposal(proposalId)
     }
 
     _intentEs = es
     return es
   }
 
+  async function fetchIntentRunStatus(proposalId) {
+    try {
+      const res = await fetch(`${BASE}/stream/${proposalId}/intent/status`, { headers: { Accept: 'application/json' } })
+      if (!res.ok) return null
+      return await res.json()
+    } catch {
+      return null
+    }
+  }
+
+  // 화면이 돌아왔을 때(상세를 열 때) — 서버에서 분해가 돌고 있으면 진행 로그에 다시 붙는다.
+  async function resumeIntentIfRunning(proposalId) {
+    if (!proposalId) return false
+    if (intentStream.value.active && intentStream.value.proposalId === proposalId && _intentEs) return true
+    const st = await fetchIntentRunStatus(proposalId)
+    if (!st?.running) return false
+    if (intentStream.value.active && intentStream.value.proposalId === proposalId && _intentEs) return true
+    subscribeToIntent(proposalId, { attach: true })
+    return true
+  }
+
   function stopIntent() {
+    const pid = intentStream.value.proposalId
     if (_intentEs) {
       _intentEs.close()
       _intentEs = null
     }
     intentStream.value.active = false
+    // 연결을 끊어도 서버 분해는 멈추지 않는다 — 「분석 중지」는 따로 알린다.
+    if (pid) fetch(`${BASE}/stream/${pid}/intent`, { method: 'DELETE' }).catch(() => {})
   }
 
   // ---------------------------------------------------------------------------
@@ -1077,7 +1136,7 @@ export const useProposalsStore = defineStore('proposals', () => {
     constitution, plan, planStream, stagedStream, stageDrafts, odaStream,
     getStageDraft, setStageDraft, clearStageDraft, saveStageDraft,
     fetchProposals, fetchProposal, createProposal, deleteProposal,
-    subscribeToIntent, stopIntent, answerClarification, submitIntentFeedback,
+    subscribeToIntent, stopIntent, resumeIntentIfRunning, fetchIntentRunStatus, answerClarification, submitIntentFeedback,
     subscribeToTasks, stopTasks, fetchTasks,
     updateDiff, submitProposal,
     getConstitution,

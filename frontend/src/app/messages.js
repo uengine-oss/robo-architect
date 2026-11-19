@@ -33,6 +33,7 @@ export const messages = {
   'proposals.panel.activityStale': { ko: '정체', en: 'Stalled' },
   'proposals.panel.activityDone': { ko: '완료', en: 'Done' },
   'proposals.panel.activityRunning': { ko: '진행 중', en: 'Running' },
+  'proposals.panel.intentRunning': { ko: 'Intent 분해 중', en: 'Decomposing intent' },
   'proposals.panel.statusAll': { ko: '전체', en: 'All' },
   'proposals.panel.stageCountTitle': { ko: '진행중 {current} · 지난 단계 {passed}', en: 'In this stage {current} · Past it {passed}' },
   'proposals.panel.stagePassed': { ko: '지남', en: 'Past' },
