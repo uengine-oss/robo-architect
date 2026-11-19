@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import AsyncIterator
+from typing import AsyncIterator, Optional
 
 from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -132,13 +132,20 @@ def _writable(uid: str, graph: str) -> None:
 async def get_state(request: Request) -> dict:
     """지금 판과 접속자. 스트림 없이 한 번만 볼 때."""
     uid = _uid(request)
-    graph = _graph(request, uid)
-    store.ensure_schema()
-    # **이 호출이 창의 심장박동이다.** 화면은 스트림과 별개로 이것을 주기적으로
-    # 부른다 — 프록시가 SSE 만 끊거나 재연결 백오프가 길어져도, 사람이 거기
-    # 있다는 사실은 이 길로 계속 전해진다. 그 사실이 곧 잠금의 수명이다.
-    store.heartbeat(graph, uid, _claims(request).get("name"), _session(request))
-    return _snapshot(graph)
+    name, session = _claims(request).get("name"), _session(request)
+
+    # DB 일은 이벤트 루프 밖에서 — 동기 psycopg 호출이 루프를 붙잡으면 다른 사람의 요청이
+    # 그만큼 줄을 선다(창 20개에서 /health p95 663ms, 2026-11-19 측정).
+    def work() -> dict:
+        graph = _graph(request, uid)
+        store.ensure_schema()
+        # **이 호출이 창의 심장박동이다.** 화면은 스트림과 별개로 이것을 주기적으로
+        # 부른다 — 프록시가 SSE 만 끊거나 재연결 백오프가 길어져도, 사람이 거기
+        # 있다는 사실은 이 길로 계속 전해진다. 그 사실이 곧 잠금의 수명이다.
+        store.heartbeat(graph, uid, name, session)
+        return _snapshot(graph)
+
+    return await asyncio.to_thread(work)
 
 
 @router.post("/lock")
@@ -197,20 +204,57 @@ async def post_leave(request: Request, body: dict = Body(default={})) -> dict:
 @router.get("/stream")
 async def stream(request: Request) -> StreamingResponse:
     uid = _uid(request)
-    graph = _graph(request, uid)
     display = _claims(request).get("name")
     session = _session(request)
-    store.ensure_schema()
-    # 스트림을 여는 이 요청 자체는 창이 진짜로 보낸 것이다 — 한 번은 찍는다.
-    store.heartbeat(graph, uid, display, session)
+
+    def open_work() -> str:
+        graph = _graph(request, uid)
+        store.ensure_schema()
+        # 스트림을 여는 이 요청 자체는 창이 진짜로 보낸 것이다 — 한 번은 찍는다.
+        store.heartbeat(graph, uid, display, session)
+        return graph
+
+    graph = await asyncio.to_thread(open_work)
+
+    def tick_work(last: int) -> tuple[dict, Optional[list], list, list]:
+        """한 바퀴의 DB 일 — 창마다 2초에 한 번이라, 이벤트 루프 밖 스레드에서 한 번에 한다."""
+        # 폴링 한 바퀴가 곧 심장박동이다. 별도 타이머를 두면 둘이
+        # 어긋나 유령 접속자가 남는다.
+        # **여기서 세션을 올리지 않는다.**
+        #
+        # 올렸더니 서버가 제 손으로 창을 살려 놨다. 창이 완전히 끊긴
+        # 뒤에도(오프라인 실측) 이 고리가 계속 돌면서 "붙어 있다"를
+        # 찍어, 선점이 60초가 지나도 안 풀렸다. **붙어 있다는 사실은
+        # 창이 실제로 보낸 요청으로만 안다** — 서버의 고리는 그 증거가
+        # 아니다.
+        #
+        # 접속자 표시는 이 고리로 갱신해도 된다. 그쪽은 "보여 줄까"의
+        # 문제이고, 잘못돼도 남의 편집을 막지 않는다.
+        store.heartbeat(graph, uid, display)
+        store.refresh_locks(graph, uid)
+        # 보유자가 사라진 잠금을 이 바퀴에 치운다. 숨기는 것으로는
+        # 부족하다 — 행이 남으면 표를 들여다본 사람이 유령을 진짜로
+        # 착각하고, 취득 경로가 그 행을 계속 만난다.
+        store.sweep_absent_locks(graph)
+        current = store.revision(graph)
+        # **무엇이 바뀌었는지 실을 수 있으면 싣는다.** 그러면 받는
+        # 쪽이 그 요소만 제자리에서 갈아끼우고, 통째로 다시 읽지
+        # 않으므로 편집 중이던 화면이 안 깨진다.
+        #
+        # 못 실으면(목록 없는 쓰기가 섞였거나 너무 뒤처졌으면)
+        # 목록 없이 보낸다 — 받는 쪽이 거친 길로 간다.
+        # **빈 목록과 "모른다"를 구별해야 한다**: 합치면 빠진 변경이
+        # 조용히 사라진다.
+        detail = store.changes_since(graph, last, current["rev"]) if current["rev"] != last else None
+        return current, detail, store.viewers(graph), store.locks(graph)
 
     async def gen() -> AsyncIterator[bytes]:
         # 첫 이벤트는 **지금 상태**다. 이걸 안 보내면 창을 새로 연 사람은 다음
         # 변경이 있을 때까지 자기가 몇 판을 보고 있는지 모른다.
-        last = store.revision(graph)["rev"]
+        last = (await asyncio.to_thread(store.revision, graph))["rev"]
         last_viewers: list[str] = []
         last_locks: list[tuple] = []
-        yield _sse("hello", _snapshot(graph))
+        yield _sse("hello", await asyncio.to_thread(_snapshot, graph))
         ticks = 0
         try:
             while True:
@@ -218,36 +262,8 @@ async def stream(request: Request) -> StreamingResponse:
                     break
                 await asyncio.sleep(POLL_SECONDS)
                 ticks += 1
-                # 폴링 한 바퀴가 곧 심장박동이다. 별도 타이머를 두면 둘이
-                # 어긋나 유령 접속자가 남는다.
-                # **여기서 세션을 올리지 않는다.**
-                #
-                # 올렸더니 서버가 제 손으로 창을 살려 놨다. 창이 완전히 끊긴
-                # 뒤에도(오프라인 실측) 이 고리가 계속 돌면서 "붙어 있다"를
-                # 찍어, 선점이 60초가 지나도 안 풀렸다. **붙어 있다는 사실은
-                # 창이 실제로 보낸 요청으로만 안다** — 서버의 고리는 그 증거가
-                # 아니다.
-                #
-                # 접속자 표시는 이 고리로 갱신해도 된다. 그쪽은 "보여 줄까"의
-                # 문제이고, 잘못돼도 남의 편집을 막지 않는다.
-                store.heartbeat(graph, uid, display)
-                store.refresh_locks(graph, uid)
-                # 보유자가 사라진 잠금을 이 바퀴에 치운다. 숨기는 것으로는
-                # 부족하다 — 행이 남으면 표를 들여다본 사람이 유령을 진짜로
-                # 착각하고, 취득 경로가 그 행을 계속 만난다.
-                store.sweep_absent_locks(graph)
-
-                current = store.revision(graph)
+                current, detail, people, held = await asyncio.to_thread(tick_work, last)
                 if current["rev"] != last:
-                    # **무엇이 바뀌었는지 실을 수 있으면 싣는다.** 그러면 받는
-                    # 쪽이 그 요소만 제자리에서 갈아끼우고, 통째로 다시 읽지
-                    # 않으므로 편집 중이던 화면이 안 깨진다.
-                    #
-                    # 못 실으면(목록 없는 쓰기가 섞였거나 너무 뒤처졌으면)
-                    # 목록 없이 보낸다 — 받는 쪽이 거친 길로 간다.
-                    # **빈 목록과 "모른다"를 구별해야 한다**: 합치면 빠진 변경이
-                    # 조용히 사라진다.
-                    detail = store.changes_since(graph, last, current["rev"])
                     last = current["rev"]
                     payload = {"graph": graph, **current}
                     if detail is not None:
@@ -255,13 +271,11 @@ async def stream(request: Request) -> StreamingResponse:
                     yield _sse("changed", payload)
 
                 # 접속자는 바뀔 때만 보낸다 — 매 바퀴 보내면 화면이 깜빡인다.
-                people = store.viewers(graph)
                 ids = sorted(p["uid"] for p in people)
                 if ids != last_viewers:
                     last_viewers = ids
                     yield _sse("viewers", {"graph": graph, "viewers": people})
 
-                held = store.locks(graph)
                 shape = [(l["elementId"], l["uid"]) for l in held]
                 if shape != last_locks:
                     last_locks = shape

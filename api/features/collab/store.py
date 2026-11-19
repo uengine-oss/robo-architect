@@ -144,10 +144,19 @@ _HOLDER_PRESENT = """
 """.format(grace=LOCK_ABSENT_GRACE_SECONDS)
 
 
+_schema_ready = False
+
+
 def ensure_schema() -> None:
+    """표를 만든다 — 프로세스마다 **한 번**. 예전에는 창의 심장박동(10초)마다 DDL 블록 전체를
+    다시 돌렸다(2026-11-19 측정 때 확인)."""
+    global _schema_ready
+    if _schema_ready:
+        return
     with pg.connection() as conn:
         with conn.cursor() as cur:
             cur.execute(_SCHEMA)
+    _schema_ready = True
 
 
 def valid_graph(graph: Optional[str]) -> bool:

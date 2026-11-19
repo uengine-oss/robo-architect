@@ -22,6 +22,8 @@ OG_PG_DATABASE (기본 og)           →  데이터베이스 — graph 가 아�
 from __future__ import annotations
 
 import os
+import threading
+import time
 from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any, Iterator
@@ -99,22 +101,89 @@ def pg_dsn() -> str:
     return " ".join(parts)
 
 
-@contextmanager
-def connection() -> Iterator[psycopg.Connection]:
-    """자동 커밋이 아닌 연결. 블록을 정상으로 빠져나가면 커밋한다.
+# ── 연결 재사용 ─────────────────────────────────────────────────────────
+#
+# 예전에는 부를 때마다 새로 붙었다("이 경로는 뜨겁지 않다"). 협업이 들어오며 뜨거워졌다 —
+# 창 하나가 2초마다 6번(collab 스트림) + 10초마다 7번(heartbeat)을 부른다. 포스코 로컬에서
+# 잰 값(2026-11-19): 붙고 조회 한 번 평균 4.5ms, 창 20개면 graph-db CPU 55% · API 의 /health
+# p95 663ms. 쉬는 연결을 DSN 마다 몇 개 남겨 두고 다시 쓴다.
+#
+# 세션 상태를 남기는 호출(SET ROLE · LISTEN · 임시 테이블)은 여기를 쓰지 않는다(지금 없다).
+# 오류가 난 연결 · 트랜잭션이 열린 채 돌아온 연결 · 오래 쉰 연결은 버린다.
+_POOL_MAX_IDLE = int(os.getenv("ROBO_PG_POOL_IDLE", "8"))
+_POOL_MAX_AGE = 300.0  # 초 — DB 가 다시 떠도 오래된 연결을 오래 붙들지 않는다
+_POOL_PING_AFTER = 30.0  # 초 — 이만큼 쉰 연결은 내주기 전에 한 번 확인한다
+_pool: dict[str, list[tuple[psycopg.Connection, float, float]]] = {}
+_pool_lock = threading.Lock()
 
-    풀을 두지 않는 이유는 이 경로가 뜨겁지 않기 때문이다 — 로그인·승인·공유는
-    사람의 속도로 일어난다. 그래프 읽기와 달리 요청마다 열어도 된다.
-    """
+
+def _checkout(dsn: str) -> psycopg.Connection:
+    now = time.monotonic()
+    while True:
+        with _pool_lock:
+            idle = _pool.get(dsn) or []
+            item = idle.pop() if idle else None
+        if item is None:
+            break
+        conn, born, last_used = item
+        if conn.closed or conn.broken or now - born > _POOL_MAX_AGE:
+            conn.close()
+            continue
+        if now - last_used > _POOL_PING_AFTER:
+            try:
+                conn.execute("SELECT 1")
+                conn.rollback()
+            except psycopg.Error:
+                conn.close()
+                continue
+        return conn
     try:
-        conn = psycopg.connect(pg_dsn(), row_factory=dict_row)
+        conn = psycopg.connect(dsn, row_factory=dict_row)
     except psycopg.Error as exc:  # 접속 자체가 안 되는 경우
         raise PgUnavailable(str(exc).split("\n")[0]) from exc
-    try:
-        with conn:
-            yield conn
-    finally:
+    conn._robo_born = now  # type: ignore[attr-defined]
+    return conn
+
+
+def _checkin(dsn: str, conn: psycopg.Connection) -> None:
+    if (_POOL_MAX_IDLE <= 0 or conn.closed or conn.broken
+            or conn.info.transaction_status != psycopg.pq.TransactionStatus.IDLE):
         conn.close()
+        return
+    born = getattr(conn, "_robo_born", time.monotonic())
+    with _pool_lock:
+        idle = _pool.setdefault(dsn, [])
+        if len(idle) < _POOL_MAX_IDLE:
+            idle.append((conn, born, time.monotonic()))
+            return
+    conn.close()
+
+
+@contextmanager
+def connection() -> Iterator[psycopg.Connection]:
+    """자동 커밋이 아닌 연결. 블록을 정상으로 빠져나가면 커밋하고, 예외면 되돌린다.
+
+    연결은 DSN 마다 쉬는 것을 몇 개 남겨 두고 다시 쓴다(위 "연결 재사용").
+    """
+    dsn = pg_dsn()
+    conn = _checkout(dsn)
+    try:
+        yield conn
+    except BaseException:
+        try:
+            conn.rollback()
+        except Exception:  # noqa: BLE001 — 끊긴 연결이면 버린다
+            conn.close()
+        raise
+    else:
+        try:
+            conn.commit()
+        except BaseException:
+            conn.close()
+            raise
+    finally:
+        if not conn.closed:
+            _checkin(dsn, conn)
 
 
 def query(sql: str, params: tuple | dict | None = None) -> list[dict[str, Any]]:
