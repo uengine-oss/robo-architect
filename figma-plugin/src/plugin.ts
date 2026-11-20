@@ -507,11 +507,8 @@ async function renderJsxSceneGraphIntoFrame(
   fontsToLoad.add('Inter|Regular')
   for (const key of fontsToLoad) {
     const [family, style] = key.split('|')
-    try { await figma.loadFontAsync({ family, style }) }
-    catch (_e) {
-      // If the requested style isn't available, fall back to Regular.
-      try { await figma.loadFontAsync({ family, style: 'Regular' }) } catch (_e2) { /* ignore */ }
-    }
+    // 시한 · 기억이 있는 tryLoadFont 로 — 못 닿는 망에서 여기서부터 막히지 않게.
+    if (!(await tryLoadFont({ family, style }))) await tryLoadFont({ family, style: 'Regular' })
   }
 
   // Apply the wireframe FRAME's own properties to the outerFrame, then
@@ -994,10 +991,34 @@ async function loadFontForText(
     candidates.push({ family: KOREAN_FONT_FAMILY, style: 'Regular' })
   }
   candidates.push({ family: 'Inter', style: 'Regular' })
+  // PC 에 깔린 한글 글꼴 — Figma 글꼴 서버에 못 닿는 망(사내 프록시)에서도 그린다(2026-11-20 포스코).
+  for (const fam of LOCAL_KOREAN_FAMILIES) candidates.push({ family: fam, style: 'Regular' })
   for (const cand of candidates) {
-    try { await figma.loadFontAsync(cand); return cand } catch (_e) { /* try next */ }
+    if (await tryLoadFont(cand)) return cand
   }
   return { family: 'Inter', style: 'Regular' }
+}
+
+// 글꼴 한 벌은 **한 번만** 불러 본다(성공·실패 모두 기억). 예전에는 TEXT 마다 후보를 처음부터
+// 다시 불렀고, 글꼴 서버에 못 닿는 망에서는 그 기다림이 쌓여 화면 하나가 120초 시한을 넘겼다
+// (Robo 연동 이력 "플러그인 응답 시간 초과" · 박스만 남고 글자가 빠짐 — 2026-11-20 포스코 현장).
+const LOCAL_KOREAN_FAMILIES = ['Malgun Gothic', '맑은 고딕', 'Apple SD Gothic Neo', 'NanumGothic', '나눔고딕']
+const FONT_LOAD_TIMEOUT_MS = 4000
+const fontLoadCache = new Map<string, Promise<boolean>>()
+function tryLoadFont(font: FontName): Promise<boolean> {
+  const key = `${font.family}|${font.style}`
+  let p = fontLoadCache.get(key)
+  if (!p) {
+    p = new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => resolve(false), FONT_LOAD_TIMEOUT_MS)
+      figma.loadFontAsync(font).then(
+        () => { clearTimeout(timer); resolve(true) },
+        () => { clearTimeout(timer); resolve(false) },
+      )
+    })
+    fontLoadCache.set(key, p)
+  }
+  return p
 }
 
 function sgWeightToStyle(weight: number | undefined, italic: boolean | undefined): string {
