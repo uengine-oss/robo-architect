@@ -65,6 +65,26 @@ const languageInput = computed({
   set: (value) => languageStore.setLanguage(value),
 })
 
+// 고르는 칸은 <select> 다. 예전 <datalist> 는 칸에 든 값(ko-KR)으로 목록을 **걸러서**
+// "ko-KR · 한국어 (ko-KR)" 만 보여 줬다 — 둘 다 한국어처럼 보였다(2026-11-20 포스코 현장).
+// 목록에 없는 BCP-47 태그(FR-011)는 "직접 입력" 으로 받는다.
+const LANGUAGE_PRESETS = [
+  { value: 'ko-KR', label: '한국어 (ko-KR)' },
+  { value: 'en-US', label: 'English (en-US)' },
+  { value: 'ja-JP', label: '日本語 (ja-JP)' },
+  { value: 'zh-CN', label: '简体中文 (zh-CN)' },
+]
+const CUSTOM_LANGUAGE = '__custom__'
+const customLanguage = ref(false)
+const languageSelect = computed({
+  get: () => (customLanguage.value || !LANGUAGE_PRESETS.some((p) => p.value === languageStore.language)
+    ? CUSTOM_LANGUAGE : languageStore.language),
+  set: (value) => {
+    customLanguage.value = value === CUSTOM_LANGUAGE
+    if (!customLanguage.value) languageStore.setLanguage(value)
+  },
+})
+
 function handleBackdropClick(e) {
   if (e.target === e.currentTarget) {
     emit('close')
@@ -254,21 +274,19 @@ function reloadAfterClear() {
               </span>
             </div>
             <div class="settings-section__control settings-section__control--stack">
+              <select v-model="languageSelect" class="language-input" data-testid="language-select">
+                <option v-for="p in LANGUAGE_PRESETS" :key="p.value" :value="p.value">{{ p.label }}</option>
+                <option :value="CUSTOM_LANGUAGE">직접 입력 (BCP-47)…</option>
+              </select>
               <input
+                v-if="languageSelect === CUSTOM_LANGUAGE"
                 v-model="languageInput"
                 type="text"
                 class="language-input"
-                list="language-options"
-                placeholder="ko-KR"
+                placeholder="예: fr-FR"
                 spellcheck="false"
                 autocomplete="off"
               />
-              <datalist id="language-options">
-                <option value="ko-KR">한국어 (ko-KR)</option>
-                <option value="en-US">English (en-US)</option>
-                <option value="ja-JP">日本語 (ja-JP)</option>
-                <option value="zh-CN">简体中文 (zh-CN)</option>
-              </datalist>
             </div>
           </div>
 
