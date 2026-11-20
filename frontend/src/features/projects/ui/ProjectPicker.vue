@@ -137,6 +137,8 @@ async function openPair(p) {
 function optionLabel(o) {
   const empty = o.nodes === 0
   if (o.kind === 'own') {
+    // 서버가 못 세면 nodes 가 null 이다(2026-11-20 현장 "권장 (노드 null)"). 숫자 없이 말한다.
+    if (o.nodes == null) return '이 프로젝트의 분석 — 권장'
     return empty
       ? '이 프로젝트에 새로 분석 — 권장 (아직 분석 없음)'
       : `이 프로젝트의 분석 — 권장 (노드 ${o.nodes})`
@@ -157,7 +159,7 @@ function optionLabel(o) {
  *   한다. 규약이 바뀌어 어긋나도 칩이 "다른 분석" 이라 말할 뿐 동작은 그대로다.
  */
 function pairLabel(p) {
-  if (p.analyzerGraph === `${p.graph}_a`) return '이 프로젝트의 분석'
+  if (p.analyzerGraph === `${p.graph}_a`) return '이 프로젝트 전용'
   const owner = store.projects.find(
     (o) => o.graph !== p.graph && o.analyzerGraph === p.analyzerGraph,
   )
@@ -262,8 +264,9 @@ watch(() => auth.token, (t) => { if (t) refresh() })
                      사람에게 안 보이게 하려는 것이었는데, 이 칩이 그 이름을 바로
                      옆에 노출했다. 이름은 **title 로만** 남긴다. -->
                 <span v-if="p.analyzerGraph" class="pp__pair"
-                      :title="`함께 보는 분석 결과 — ${p.analyzerGraph}. 이 분석을 다시 돌리면 지금 결과는 통째로 교체된다.`">
-                  ⇄ {{ pairLabel(p) }}
+                      :title="`추적성이 근거로 삼는 레거시 분석 결과입니다(${p.analyzerGraph}). 그 분석을 다시 돌리면 결과가 통째로 바뀝니다. 바꾸려면 「분석 결과 바꾸기」.`">
+                  <!-- 무엇을 알려 주는지 칩만 보고 알게 한다(11-20 현장: "뭘 알려 주려는 것인가"). -->
+                  레거시 분석 · {{ pairLabel(p) }}
                 </span>
                 <span v-else class="pp__pair pp__pair--none"
                       title="짝이 없으면 추적성이 .env 의 분석 graph 를 본다 — 다른 프로젝트의 분석일 수 있다">

@@ -126,6 +126,22 @@ test('이미 분석이 있으면 규모를 보여준다', async ({ page }) => {
   await expect(select).not.toContainText('아직 분석 없음')
 })
 
+test('노드 수를 못 세면 null 을 찍지 않는다 (11-20 현장)', async ({ page }) => {
+  await page.route(LIST, projects([ADMIN, READER]))
+  await page.route('**/api/projects/prj_a1/analyzer-options', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ options: [
+      { graph: 'prj_a1_a', label: '이 프로젝트의 분석', kind: 'own', current: true, nodes: null },
+    ] }),
+  }))
+  await page.goto('/', { waitUntil: 'networkidle' })
+  await page.locator('.pp__btn').click()
+  await page.locator('.pp__list li', { hasText: '새 프로젝트' }).locator('.pp__pairbtn').click()
+  const select = page.locator('.pp__pairform select')
+  await expect(select).toContainText('이 프로젝트의 분석 — 권장')
+  await expect(select).not.toContainText('null')
+})
+
 test('짝이 없으면 목록이 그렇게 말한다', async ({ page }) => {
   await page.route(LIST, projects([ADMIN]))
   await page.goto('/', { waitUntil: 'networkidle' })
