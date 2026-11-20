@@ -112,3 +112,13 @@ def test_unreachable_gateway_is_502(monkeypatch, client):
         AsyncClient=lambda **kw: httpx.AsyncClient(transport=transport, **kw),
         Timeout=httpx.Timeout, HTTPError=httpx.HTTPError))
     assert client.get("/api/gateway/robo/graph").status_code == 502
+
+
+def test_drops_browser_origin_so_gateway_cors_does_not_403(client, seen):
+    """서버 주소(10.x)에서 연 화면의 업로드 — Origin 이 gateway 까지 가면 CORS 403."""
+    r = client.post("/api/gateway/antlr/fileUpload", content=b"x",
+                    headers={"Origin": "http://10.125.3.81:8080",
+                             "X-Neo4j-Database": "p_mine_a",
+                             "Content-Type": "multipart/form-data; boundary=b"})
+    assert r.status_code == 200
+    assert "origin" not in {k.lower() for k in seen[-1].headers.keys()}

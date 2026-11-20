@@ -51,6 +51,10 @@ _DROP_REQUEST = frozenset({
     "host", "content-length", "connection", "keep-alive", "transfer-encoding",
     "upgrade", "proxy-connection", "te", "trailer",
     "x-neo4j-uri", "x-neo4j-user", "x-neo4j-password",
+    # 브라우저의 Origin 을 넘기면 gateway 의 CORS(localhost 만 허용)가 서버 주소에서 연
+    # 화면의 POST(소스 업로드 · 분석 시작)를 본문 없는 403 으로 막는다(2026-11-20 현장).
+    # 여기서 gateway 로 가는 것은 서버끼리의 호출이라 CORS 가 필요 없다.
+    "origin",
 })
 _DROP_RESPONSE = frozenset({
     "content-length", "connection", "keep-alive", "transfer-encoding",
