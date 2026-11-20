@@ -479,6 +479,9 @@ services:
     mem_limit: ${ROBO_MEM_PARSER:-0}
     environment:
       SERVER_PORT: "8081"
+      # 파일 하나의 경로(폴더/…/파일명)가 길면(한글 3바이트) Tomcat 기본 512바이트를 넘어
+      # 업로드가 413 "최대 100MB…"(엉터리 문구)로 막힌다 — 2026-11-20 현장.
+      SERVER_TOMCAT_MAXPARTHEADERSIZE: "16KB"
       ROBO_DATA_DIR: /data
       PARSER_REPAIR_AGENT_ENABLED: "false"
       PARSER_REPAIR_AGENT_MAX_OUTPUT_TOKENS: "2048"
