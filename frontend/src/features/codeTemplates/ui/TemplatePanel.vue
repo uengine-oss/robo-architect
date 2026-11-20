@@ -57,6 +57,22 @@ const selected = ref(null)
 
 const hasChoice = computed(() => sets.value.length > 1)
 const currentSession = computed(() => sessions.value.find((s) => s.id === sessionId.value))
+/**
+ * 코드를 만들 수 있는 판 = **설계 ES 가 있는(BC 가 하나 이상인) 세션**.
+ * 프로젝트마다 보통 하나다 — 하나면 고를 것이 없으므로 선택창을 그리지 않고
+ * 그 판을 바로 쓴다(2026-11-20 현장: "세션 선택창이 의미 없다 · 설계 ES 가 곧바로 선택").
+ * 둘 이상일 때만(예전 분석 판이 남은 경우) 고르게 하고, 이름 대신 **갱신 시각**으로 구별한다.
+ */
+const designSessions = computed(() => sessions.value.filter((s) => (s.boundedContexts || 0) > 0))
+const hasSessionChoice = computed(() => designSessions.value.length > 1)
+
+/** 판 이름 — 세션 아이디나 "이름 없는 판" 대신 프로젝트 이름 · 갱신 시각. */
+function sessionLabel(s) {
+  const named = s.name && s.name !== s.id ? s.name : ''
+  const when = (s.updatedAt || '').replace('T', ' ').slice(0, 16)
+  const head = named || (hasSessionChoice.value && when ? `${when} 판` : '설계 ES')
+  return `${head} · BC ${s.boundedContexts}`
+}
 const fileCount = computed(() => result.value?.files?.length || 0)
 const overriddenCount = computed(
   () => templateFiles.value.filter((f) => f.source === 'db').length,
@@ -107,7 +123,9 @@ onMounted(async () => {
     const names = sets.value.map((x) => x.name)
     setName.value = DEFAULT_SET && names.includes(DEFAULT_SET) ? DEFAULT_SET : names[0] || ''
     sessions.value = d.sessions || []
-    if (sessions.value.length) sessionId.value = sessions.value[0].id
+    // 서버가 갱신 시각 순으로 준다 — 설계 ES 가 있는 가장 최근 판을 고른다.
+    const first = designSessions.value[0]
+    if (first) sessionId.value = first.id
     if (setName.value) await loadOptions()
   } catch (e) {
     error.value = e.message
@@ -144,7 +162,7 @@ async function generate() {
   if (!setName.value || !sessionId.value || missing.length) {
     error.value = missing.length
       ? `${missing.map((f) => f.label).join(', ')} 를 입력하세요.`
-      : '세션을 지정하세요.'
+      : '코드를 만들 설계 ES 가 없습니다. 먼저 요구사항에서 이벤트 스토밍을 생성하세요.'
     return
   }
   loading.value = true
@@ -179,15 +197,18 @@ async function download() {
 <template>
   <div class="tpl">
     <header class="tpl__toolbar">
-      <div class="tpl__field">
-        <label>프로젝트 · 세션</label>
-        <select v-model="sessionId" :disabled="!sessions.length">
-          <!-- 세션 아이디(`0eb8e37f`)는 사람이 고를 수 있는 이름이 아니다.
-               **프로젝트 이름**을 앞에 두고, 세션은 그 안의 판으로 읽히게 한다. -->
-          <option v-for="s in sessions" :key="s.id" :value="s.id" :title="s.id">
-            {{ projectName }} · {{ s.name === s.id ? '이름 없는 판' : s.name }} — BC {{ s.boundedContexts }}
+      <div class="tpl__field" data-testid="tpl-session">
+        <label>{{ hasSessionChoice ? '프로젝트 · 설계 판' : '프로젝트 · 설계' }}</label>
+        <!-- 판이 둘 이상일 때만 고른다. 하나면 그 판을 글자로만 보여 준다. -->
+        <select v-if="hasSessionChoice" v-model="sessionId">
+          <option v-for="s in designSessions" :key="s.id" :value="s.id" :title="s.id">
+            {{ projectName }} · {{ sessionLabel(s) }}
           </option>
         </select>
+        <span v-else class="tpl__static" :title="currentSession?.id || ''">
+          {{ projectName }}<template v-if="currentSession"> · {{ sessionLabel(currentSession) }}</template>
+          <template v-else> · 설계 ES 없음</template>
+        </span>
       </div>
 
       <!-- 템플릿이 선언한 항목만 그린다. 화면이 옵션을 정하지 않는다. -->
@@ -302,6 +323,7 @@ async function download() {
   border: 1px solid var(--ccw-border); border-radius: 4px; min-width: 190px;
 }
 .tpl__field input { min-width: 130px; }
+.tpl__static { font-size: 12px; padding: 5px 2px; white-space: nowrap; }
 .tpl__field select:focus, .tpl__field input:focus {
   outline: none; border-color: var(--ccw-accent);
 }
