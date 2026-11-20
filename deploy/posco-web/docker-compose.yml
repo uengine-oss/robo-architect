@@ -418,6 +418,7 @@ services:
       # pgpt = 사내 P-GPT(이미지 안 파일) · openai_gpt41 = OpenAI 직결(아래 마운트한 파일).
       # 둘 다 gpt-4.1 이라 위·아래의 능력 봉인과 맞는다. 주소를 env 로 덮는 길이 analyzer 에 없어 파일로 고른다.
       ROBO_LLM_CONFIG: ${ROBO_ANALYZER_LLM_CONFIG:-pgpt}
+      ROBO_AI_BASE_URL: ${ROBO_AI_BASE_URL:?}   # analyzer-llm/pgpt.yaml 의 api_base — architect-api 와 같은 P-GPT 주소
       ROBO_LLM_MODEL_RUNTIME_CAPABILITIES_REF: llm/capabilities/gpt41_openai_2025_04_14.yaml
       ROBO_LLM_MODEL_RUNTIME_CAPABILITIES_SHA256: 09904ac41504b7128588dd32ef0f8c2dabf80366209bcad3bca6d2c730055df8
       ROBO_LLM_REPETITION_GUARD: "true"
@@ -458,6 +459,7 @@ services:
       - ./tiktoken-cache:/opt/tiktoken-cache:ro,z   # tiktoken 사전 — 사내망은 openaipublic.blob.core.windows.net 에 못 닿는다
       - shared_data:/data
       - ./analyzer-llm/openai_gpt41.yaml:/app/llm/configs/openai_gpt41.yaml:ro,z
+      - ./analyzer-llm/pgpt.yaml:/app/llm/configs/pgpt.yaml:ro,z   # 이미지 안 박힌 주소 대신 ROBO_AI_BASE_URL (11-20)
       # 이미지 가격표에 gpt-4.1 이 없어 분석이 거부된다 — 파일 머리말 참고.
       - ./analyzer-llm/llm_pricing.yaml:/app/llm/usage/llm_pricing.yaml:ro,z
     depends_on:

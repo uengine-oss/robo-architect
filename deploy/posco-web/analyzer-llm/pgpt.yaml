@@ -1,0 +1,18 @@
+# P-GPT — analyzer 용 · 이미지 안 llm/configs/pgpt.yaml 을 **덮어쓴다**(compose 가 마운트).
+#
+# 왜 (2026-11-20 포스코 현장): 이미지 안 파일은 api_base 를 http://aigpt.posco.net/gpgpta01-gpt/v1 로
+# 박아 두었는데, 현장 P-GPT 주소는 .env 의 ROBO_AI_BASE_URL 이다(architect-api 가 그것으로 정상).
+# analyzer 만 박힌 주소로 가서 레거시 분석이 /chat/completions 404(OpenAIModelNotFound)로 멈췄다.
+# config_loader 가 api_base 를 os.path.expandvars 로 풀므로 같은 값을 env 로 받는다 — 주소는 한 곳(.env)에서만.
+# 나머지 값은 이미지 안 pgpt.yaml(analyzer 8d4a71d9)과 같다.
+provider: openai
+api_base: ${ROBO_AI_BASE_URL}
+model: gpt-4.1
+max_tokens: 16000
+timeout_seconds: 300
+verify_ssl: true
+sampling:
+  temperature: 0.3
+  top_p: 0.8
+reasoning_effort: none
+structured_output_method: provider_default
