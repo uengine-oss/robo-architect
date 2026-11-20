@@ -323,6 +323,9 @@ services:
       # 파일 하나의 경로(폴더/…/파일명)가 길면(한글 3바이트) Tomcat 기본 512바이트를 넘어
       # 업로드가 413 "최대 100MB…"(엉터리 문구)로 막힌다 — 2026-11-20 현장.
       SERVER_TOMCAT_MAXPARTHEADERSIZE: "16KB"
+      # 한 번에 올리는 파일 수 — Tomcat 기본 50개(넘으면 같은 엉터리 413) · 1000(요청 인자 수)
+      SERVER_TOMCAT_MAXPARTCOUNT: "100000"
+      SERVER_TOMCAT_MAXPARAMETERCOUNT: "100000"
       ROBO_DATA_DIR: /data
       PARSER_REPAIR_AGENT_ENABLED: "false"
       PARSER_REPAIR_AGENT_MAX_OUTPUT_TOKENS: "2048"
