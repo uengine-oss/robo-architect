@@ -35,6 +35,7 @@ on:
       - extensions/**
       - skills/**
       - frontend/**
+      - figma-plugin/**        # web 이미지가 플러그인 묶음(zip)을 낸다
       - open-pencil
       - robo-analyzer/robo-data-frontend
       - robo-analyzer/robo-data-analyzer
