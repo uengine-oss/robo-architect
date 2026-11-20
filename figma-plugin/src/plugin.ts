@@ -539,7 +539,7 @@ async function renderSceneNode(
   const sn = nodes[nodeId]
   if (!sn) { ctx.failed++; return }
   try {
-    if (sn.type === 'FRAME' || sn.type === 'SECTION' || sn.type === 'GROUP') {
+    if (sn.type === 'FRAME' || sn.type === 'SECTION' || sn.type === 'GROUP' || sn.type === 'COMPONENT') {
       const f = figma.createFrame()
       f.name = sn.name || 'Frame'
       // Add to parent BEFORE applying size/layout — auto-layout sizing rules
@@ -631,6 +631,22 @@ async function renderSceneNode(
         if (!comp) {
           for (const page of figma.root.children) { visit(page, false); if (comp) break }
         }
+      }
+      if (!comp && Array.isArray(sn.childIds) && sn.childIds.length) {
+        // Fallback (v8, 2026-11-20 포스코 현장): 파일에 그 컴포넌트가 없어도 sceneGraph 에는
+        // 인스턴스의 **내용(자식)** 이 들어 있다 — Robo 인스펙터는 그것을 그린다. 회색 빈 박스
+        // 대신 같은 내용을 프레임으로 그린다. (컴포넌트가 든 파일이면 위에서 진짜 인스턴스가 된다.)
+        const f = figma.createFrame()
+        f.name = sn.name || 'Instance'
+        parent.appendChild(f)
+        applyContainerProps(f, sn)
+        applyFillsAndStrokes(f, sn)
+        applyAutoLayout(f, sn)
+        ctx.created++
+        for (const cid of sn.childIds) {
+          await renderSceneNode(f, cid, nodes, ctx)
+        }
+        return
       }
       if (!comp) {
         // Fallback (v7): the bound Figma file doesn't actually contain a
