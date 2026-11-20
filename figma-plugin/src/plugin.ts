@@ -17,19 +17,30 @@ figma.showUI(__html__, { width: 320, height: 400, themeColors: true })
 // pre-fill BEFORE auto-detection kicks in.
 
 const CFG_KEY_URL = 'roboArchitectBackendUrl'
-const CFG_KEY_FILE_KEY = 'roboArchitectFileKeyOverride'
+const CFG_KEY_FILE_KEY = 'roboArchitectFileKeyOverride'   // 옛 판 — 파일 구분 없이 하나(읽지 않는다)
+// 파일 키는 **파일마다** 기억한다 — { "<Figma 파일 이름>": "<file key>" }.
+// 직접 불러온 플러그인에는 figma.fileKey 가 없어 사람이 넣은 키를 기억하는데, 예전에는 플러그인
+// 전체에 한 칸이라 새 파일에서 열어도 **이전 파일 키를 물고** 연결됐다(2026-11-20 포스코 현장:
+// 연결 해제 · 새 연결 뒤에도 Robo 가 옛 파일로 보내 "플러그인 응답 시간 초과").
+const CFG_KEY_FILE_KEYS = 'roboArchitectFileKeyByFile'
+function currentFileName(): string {
+  try { return figma.root.name || '' } catch (_e) { return '' }
+}
 
 async function loadAndSendStoredConfig(): Promise<void> {
   try {
-    const [savedUrl, savedFileKey] = await Promise.all([
+    const [savedUrl, byFile] = await Promise.all([
       figma.clientStorage.getAsync(CFG_KEY_URL),
-      figma.clientStorage.getAsync(CFG_KEY_FILE_KEY),
+      figma.clientStorage.getAsync(CFG_KEY_FILE_KEYS),
     ])
+    const name = currentFileName()
+    const savedFileKey = byFile && typeof byFile === 'object' && name ? (byFile as any)[name] : null
     figma.ui.postMessage({
       type: 'RESTORED_CONFIG',
       backendUrl: typeof savedUrl === 'string' ? savedUrl : null,
       fileKeyOverride: typeof savedFileKey === 'string' ? savedFileKey : null,
       autoDetectedFileKey: figma.fileKey || null,
+      fileName: name,
     })
   } catch (_e) { /* best-effort */ }
 }
@@ -118,9 +129,20 @@ figma.ui.onmessage = async (msg: any) => {
             await figma.clientStorage.deleteAsync(key)
           }
         }
+        const saveFileKey = async (): Promise<void> => {
+          const name = currentFileName()
+          if (!name) return
+          const raw = await figma.clientStorage.getAsync(CFG_KEY_FILE_KEYS)
+          const byFile: Record<string, string> = raw && typeof raw === 'object' ? { ...(raw as any) } : {}
+          const v = typeof msg.fileKeyOverride === 'string' ? msg.fileKeyOverride.trim() : ''
+          if (v) byFile[name] = v
+          else delete byFile[name]
+          await figma.clientStorage.setAsync(CFG_KEY_FILE_KEYS, byFile)
+        }
         await Promise.all([
           setOrClear(CFG_KEY_URL, msg.backendUrl),
-          setOrClear(CFG_KEY_FILE_KEY, msg.fileKeyOverride),
+          saveFileKey(),
+          figma.clientStorage.deleteAsync(CFG_KEY_FILE_KEY),   // 옛 한 칸은 지운다
         ])
         figma.ui.postMessage({ type: 'CONFIG_SAVED' })
         break
@@ -129,6 +151,7 @@ figma.ui.onmessage = async (msg: any) => {
         await Promise.all([
           figma.clientStorage.deleteAsync(CFG_KEY_URL),
           figma.clientStorage.deleteAsync(CFG_KEY_FILE_KEY),
+          figma.clientStorage.deleteAsync(CFG_KEY_FILE_KEYS),
         ])
         figma.ui.postMessage({ type: 'CONFIG_RESET' })
         break

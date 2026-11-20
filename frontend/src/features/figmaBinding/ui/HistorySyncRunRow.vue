@@ -27,17 +27,20 @@ const kindLabel = computed(() =>
   props.run.kind === 'manual-retry' ? '전체 다시 시도' : '전체 동기화'
 )
 
+// 한국 시간으로 고정한다(2026-11-20 포스코 현장: 이 이력만 9시간 늦게 — UTC 로 보였다).
+// 서버 값은 UTC 다. 끝에 시간대 표시가 없는 값이 와도 UTC 로 읽는다.
+const KST = new Intl.DateTimeFormat('sv-SE', {
+  timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', hour12: false,
+})
 function fmtTime(iso) {
   if (!iso) return ''
   try {
-    const d = new Date(iso)
-    if (isNaN(d.getTime())) return iso
-    const yyyy = d.getFullYear()
-    const mm = String(d.getMonth() + 1).padStart(2, '0')
-    const dd = String(d.getDate()).padStart(2, '0')
-    const hh = String(d.getHours()).padStart(2, '0')
-    const mi = String(d.getMinutes()).padStart(2, '0')
-    return `${yyyy}-${mm}-${dd} ${hh}:${mi}`
+    const raw = String(iso)
+    const hasZone = /(Z|[+-]\d{2}:?\d{2})$/.test(raw)
+    const d = new Date(hasZone ? raw : `${raw.replace(' ', 'T')}Z`)
+    if (isNaN(d.getTime())) return raw
+    return KST.format(d)   // "2026-11-20 14:05"
   } catch {
     return iso
   }

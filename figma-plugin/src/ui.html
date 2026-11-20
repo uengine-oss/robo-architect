@@ -164,11 +164,8 @@
             if (savedUrl) {
               document.getElementById('serverUrl').value = savedUrl
             }
-            const savedFileKey = localStorage.getItem('robo_sync_file_key')
-            if (savedFileKey && !fileKey) {
-              fileKey = savedFileKey
-              document.getElementById('fileKeyInput').value = savedFileKey
-            }
+            // 파일 키는 여기(localStorage — 파일 구분 없음)에서 채우지 않는다. 파일마다 기억한 값이
+            // RESTORED_CONFIG 로 온다. 예전에는 새 파일에서도 이전 파일 키가 채워졌다(11-20 현장).
           } catch {}
           break
 
@@ -192,6 +189,11 @@
               // No saved override — use Figma's auto-detected fileKey.
               fileKey = msg.autoDetectedFileKey
               if (!fkInput.value) fkInput.value = msg.autoDetectedFileKey
+            } else if (!fkInput.dataset.userEdited) {
+              // 이 파일에는 기억한 키가 없다 — 비워 두고 알린다(다른 파일 키로 연결하지 않게).
+              fileKey = null
+              fkInput.value = ''
+              addLog(`이 파일${msg.fileName ? ` "${msg.fileName}"` : ''}의 키를 모릅니다 — File Key 칸에 이 파일의 URL 을 붙여넣고 연결하세요.`, 'error')
             }
             // Pairing is intentionally not persisted. The user enters a fresh
             // code when the plugin session starts, rather than storing a token.

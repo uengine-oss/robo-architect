@@ -46,10 +46,26 @@ def get_plugin_metadata(file_key: str) -> dict[str, Any] | None:
     return _plugin_metadata.get(file_key)
 
 
+# 마지막으로 이 파일 키로 poll/announce 가 온 시각(monotonic). 예전에는 한 번이라도 왔으면
+# 영원히 "연결됨" 이라, 플러그인을 다른 파일로 옮긴 뒤에도 옛 파일 키로 메시지를 넣고
+# 120초 뒤 "응답 시간 초과" 가 됐다(2026-11-20 포스코 현장). 플러그인은 3초마다 poll 한다.
+_last_seen: dict[str, float] = {}
+_ALIVE_WITHIN_S = 30.0
+
+
+def _touch(file_key: str) -> None:
+    import time
+    _last_seen[file_key] = time.monotonic()
+
+
 def is_polling_active(file_key: str) -> bool:
-    """True if we have any signal (websocket or recent supportedMessages
-    announcement) that a plugin is reachable for this file key."""
-    return file_key in _connections or file_key in _plugin_metadata
+    """True if a plugin is reachable for this file key — a websocket, or a
+    poll/announce within the last ``_ALIVE_WITHIN_S`` seconds."""
+    import time
+    if file_key in _connections:
+        return True
+    seen = _last_seen.get(file_key)
+    return seen is not None and time.monotonic() - seen < _ALIVE_WITHIN_S
 
 
 async def _register(file_key: str, ws: WebSocket) -> None:
@@ -245,6 +261,7 @@ async def announce_support(req: AnnounceSupportRequest) -> dict[str, Any]:
         "supportedMessages": list(req.supportedMessages),
         "transport": "polling",
     }
+    _touch(req.file_key)
     SmartLogger.log(
         "INFO",
         f"Plugin support announced: {req.file_key} → {req.supportedMessages}",
@@ -281,6 +298,7 @@ async def poll_updates(file_key: str = "") -> dict[str, Any]:
     if not file_key:
         return {"updates": [], "bound": False}
 
+    _touch(file_key)
     if file_key not in _plugin_metadata:
         _plugin_metadata[file_key] = {
             "supportedMessages": list(_DEFAULT_SUPPORTED_MESSAGES),
