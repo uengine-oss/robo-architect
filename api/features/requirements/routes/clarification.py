@@ -151,6 +151,26 @@ def _scope_name_and_user_stories(
     return None, []
 
 
+def _parent_scopes(scope_type: ScopeType, scope_id: str) -> tuple[tuple[str, str], ...]:
+    """바깥 범위(가까운 것부터) — 이 범위에 스캔이 없을 때 점수판이 빌려 쓴다.
+
+    Epic → 프로젝트 · Feature → 그 Epic → 프로젝트. 프로젝트는 바깥이 없다.
+    """
+    project = (ScopeType.project.value, "*")
+    if scope_type == ScopeType.bounded_context:
+        return (project,)
+    if scope_type == ScopeType.feature:
+        for epic in build_requirements_tree().epics:
+            for feature in [
+                *epic.features,
+                *([epic.unassignedFeature] if epic.unassignedFeature else []),
+            ]:
+                if feature.id == scope_id:
+                    return ((ScopeType.bounded_context.value, epic.id), project)
+        return (project,)
+    return ()
+
+
 def _snapshot_from_node(node) -> dict:
     """Project a `UserStoryNodeDTO` to a `UserStorySnapshot`-shaped dict."""
     return {
@@ -947,7 +967,9 @@ async def get_clarification_clarity(
         raise HTTPException(status_code=404, detail="scope_not_found")
 
     us_ids = [node.id for node in user_story_nodes]
-    raw = compute_clarity_scores_for_scope(us_ids, scopeType.value, scopeId)
+    raw = compute_clarity_scores_for_scope(
+        us_ids, scopeType.value, scopeId, _parent_scopes(scopeType, scopeId),
+    )
     overall = overall_clarity(raw)
 
     response = ClarityScoresResponse(

@@ -769,12 +769,20 @@ export const useRequirementsStore = defineStore('requirements', () => {
     return !!clarificationFlags.value[userStoryId]
   }
 
-  async function fetchClarityScores(scopeType = 'project', scopeId = '*') {
+  // 점수판이 지금 보여 주는 범위. 스캔·적용·되돌리기 뒤 다시 읽을 때 **이 범위로** 읽는다 —
+  // 예전에는 인자 없이 불러 프로젝트 범위로 바뀌었다(2026-11-20 현장: 에픽에서 답한 뒤 "스캔 안 함").
+  let clarityScope = { scopeType: 'project', scopeId: '*' }
+  async function fetchClarityScores(scopeType, scopeId) {
+    if (scopeType) clarityScope = { scopeType, scopeId: scopeId || '*' }
+    else ({ scopeType, scopeId } = clarityScope)
     try {
       const qs = new URLSearchParams({ scopeType, scopeId }).toString()
       const res = await fetch(`/api/requirements/clarification/clarity?${qs}`)
       if (!res.ok) throw new Error(`clarity fetch failed: ${res.status}`)
-      clarityScores.value = await res.json()
+      const data = await res.json()
+      // 늦게 온 다른 범위의 응답이 지금 범위를 덮지 않게 한다.
+      if (clarityScope.scopeType !== scopeType || clarityScope.scopeId !== (scopeId || '*')) return data
+      clarityScores.value = data
       return clarityScores.value
     } catch (e) {
       log.warn('clarif_fetch_clarity', 'Clarity fetch failed', { error: String(e) })

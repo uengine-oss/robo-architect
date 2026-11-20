@@ -189,3 +189,37 @@ def test_clear_scope_drops_cache() -> None:
     assert cov.get_coverage("feature", "f-1") is not None
     cov.clear_scope("feature", "f-1")
     assert cov.get_coverage("feature", "f-1") is None
+
+
+def test_scope_without_own_scan_uses_parent_scan() -> None:
+    """11-20 현장: 전체 명확화 뒤 에픽을 열면 '스캔 안 함' — 바깥(프로젝트) 스캔을 빌린다."""
+    cov.record_coverage(
+        session_id="s1", scope_type="project", scope_id="*",
+        rows=[_row(AmbiguityCategory.functional_scope, CoverageStatus.clear),
+              _row(AmbiguityCategory.edge_cases, CoverageStatus.deferred)],
+    )
+    no_parent = cs.compute_clarity_scores_for_scope(["us1"], "bounded_context", "bc1")
+    assert not no_parent.scanned
+    got = cs.compute_clarity_scores_for_scope(
+        ["us1"], "bounded_context", "bc1", (("project", "*"),),
+    )
+    by = {s.category: s for s in got.scores}
+    assert got.scanned
+    assert by[AmbiguityCategory.functional_scope].score == 1.0
+    assert by[AmbiguityCategory.edge_cases].score == 0.5
+
+
+def test_own_scan_wins_over_parent_scan() -> None:
+    cov.record_coverage(
+        session_id="s1", scope_type="project", scope_id="*",
+        rows=[_row(AmbiguityCategory.functional_scope, CoverageStatus.outstanding)],
+    )
+    cov.record_coverage(
+        session_id="s2", scope_type="bounded_context", scope_id="bc1",
+        rows=[_row(AmbiguityCategory.functional_scope, CoverageStatus.clear)],
+    )
+    got = cs.compute_clarity_scores_for_scope(
+        ["us1"], "bounded_context", "bc1", (("project", "*"),),
+    )
+    by = {s.category: s for s in got.scores}
+    assert by[AmbiguityCategory.functional_scope].score == 1.0

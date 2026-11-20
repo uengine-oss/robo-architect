@@ -210,7 +210,10 @@ def compute_clarity_scores(user_story_ids: list[str]) -> ClarityScores:
 
 
 def compute_clarity_scores_for_scope(
-    user_story_ids: list[str], scope_type: str, scope_id: str
+    user_story_ids: list[str],
+    scope_type: str,
+    scope_id: str,
+    parent_scopes: tuple[tuple[str, str], ...] = (),
 ) -> ClarityScores:
     """Scope-aware variant: looks up cached coverage for `(scope_type, scope_id)`
     and overlays the 4-state weighted scores on top of the flag-based fallback.
@@ -223,6 +226,13 @@ def compute_clarity_scores_for_scope(
         # coverage row is cached for it.
         return base
     coverage = get_coverage(scope_type, scope_id)
+    # 이 범위에 자기 스캔이 없으면 **바깥 범위의 스캔**을 쓴다(Feature → Epic → 프로젝트).
+    # 2026-11-20 포스코 현장: "전체 명확화" 뒤 에픽을 열면 그 스캔이 프로젝트에만 저장돼
+    # 에픽 화면이 "스캔 안 함"으로 보였다. 바깥 범위 스캔은 그 안의 요구사항을 다 훑은 결과다.
+    for parent_type, parent_id in parent_scopes:
+        if coverage is not None:
+            break
+        coverage = get_coverage(parent_type, parent_id)
     if coverage is None:
         return base
 
