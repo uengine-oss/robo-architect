@@ -461,7 +461,9 @@ function buildDraftChanges() {
         // 라이브 경로(/api/chat/confirm)도 Property update 시 parentType/parentId 를 셀렉터로
         // 기대하며(_apply_update_tx 화이트리스트에서 제외되어 SET 되지 않음) 회귀 없음 — delete
         // 초안과 동일 규약(1db35e8).
-        updates: { ...updates, parentType, parentId }
+        // oldName: 행에 DB id 가 없을 때(prop-noid-*) 서버가 **지금 그래프에 있는 이름**으로 찾게 한다.
+        // 같은 저장에서 이름도 바꾸면 targetName 은 새 이름이라 그것으로는 못 찾는다(2026-11-20 현장).
+        updates: { ...updates, parentType, parentId, oldName: normalizeName(init.name) }
       })
     }
   }

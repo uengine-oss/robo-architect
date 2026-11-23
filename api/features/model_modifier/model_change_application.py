@@ -330,11 +330,13 @@ _LABELS_BY_TYPE: dict[str, str] = {
 
 _ALLOWED_UPDATE_FIELDS_BY_LABEL: dict[str, set[str]] = {
     # Default nodes: description + displayName (UI label) + a small set of safe, whitelisted fields (Inspector MVP)
-    "Command": {"description", "displayName", "actor"},
+    # 인스펙터 칸(`nodeEditSchema.ts`)과 맞춘다 — 칸은 있는데 여기 없으면 **저장 전체가** 거절된다
+    # (2026-11-23 점검: Command category · ReadModel actor/isMultipleResult 가 "field not allowed").
+    "Command": {"description", "displayName", "actor", "category"},
     "Event": {"description", "displayName", "version"},
     "Policy": {"description", "displayName"},
     "Aggregate": {"description", "displayName", "rootEntity"},
-    "ReadModel": {"description", "displayName", "provisioningType"},
+    "ReadModel": {"description", "displayName", "provisioningType", "actor", "isMultipleResult"},
     "BoundedContext": {"description", "displayName"},
     # UI: displayName (label) + wireframe + attachment metadata
     "UI": {"description", "displayName", "template", "sceneGraph", "attachedToId", "attachedToType", "attachedToName"},
@@ -527,16 +529,53 @@ def _combined_similarity(a_raw: str | None, b_raw: str | None) -> dict[str, floa
     return {"jw": jw, "lev_sim": lev, "score": score}
 
 
-def _resolve_property_target_id_tx(tx: Any, change: dict[str, Any]) -> tuple[str | None, list[dict[str, Any]], str]:
+def _property_selector_names(change: dict[str, Any], batch: list[dict[str, Any]]) -> list[str]:
+    """이 Property 를 **지금 그래프에 있는 이름**으로 찾을 후보 — 가까운 것부터.
+
+    화면이 같은 저장에서 이름도 바꾸면 rename 초안의 targetName 은 **새 이름**이고,
+    update 초안의 targetName 도 새 이름이다. 그래프에는 아직 옛 이름이 있으므로
+    옛 이름(`updates.oldName` · 같은 targetId 의 rename 초안 oldName)을 먼저 본다.
+    (2026-11-20 포스코 현장: 수동 수정인데 "자동 보정할 수 없습니다")
+    """
+    names: list[str] = []
+    upd = change.get("updates") if isinstance(change.get("updates"), dict) else {}
+    if upd.get("oldName"):
+        names.append(str(upd["oldName"]))
+    tid = str(change.get("targetId") or "")
+    for other in batch:
+        if other is change or other.get("action") != "rename":
+            continue
+        if str(other.get("targetId") or "") != tid:
+            continue
+        o_upd = other.get("updates") if isinstance(other.get("updates"), dict) else {}
+        if o_upd.get("oldName"):
+            names.append(str(o_upd["oldName"]))
+    if change.get("action") != "rename" and change.get("targetName"):
+        names.append(str(change["targetName"]))
+    seen: set[str] = set()
+    out: list[str] = []
+    for n in (x.strip() for x in names):
+        if n and n not in seen:
+            seen.add(n)
+            out.append(n)
+    return out
+
+
+def _resolve_property_target_id_tx(
+    tx: Any, change: dict[str, Any], selector_name: str | None = None,
+) -> tuple[str | None, list[dict[str, Any]], str]:
     """
     Try to resolve Property UUID when change.targetId is missing/invalid.
-    Selector: updates.parentType, updates.parentId, and change.targetName (existing property name).
+    Selector: updates.parentType, updates.parentId, and the existing property name
+    (`selector_name`, default change.targetName).
     Returns (resolved_id, candidates_debug, selector_debug).
     """
     updates = change.get("updates") if isinstance(change.get("updates"), dict) else {}
     parent_type = str(updates.get("parentType") or "").strip()
     parent_id = str(updates.get("parentId") or "").strip()
-    selector_name = str(change.get("targetName") or "").strip()
+    if selector_name is None:
+        selector_name = str(change.get("targetName") or "")
+    selector_name = selector_name.strip()
     selector_dbg = f"parentType={parent_type} parentId={parent_id} targetName={selector_name}"
 
     if not parent_type or not parent_id or not selector_name:
@@ -758,6 +797,8 @@ def _apply_update_tx(tx: Any, change: dict[str, Any]) -> None:
         "version",
         "rootEntity",
         "provisioningType",
+        "category",
+        "isMultipleResult",
         # Property fields
         "type",
         "isKey",
@@ -1645,9 +1686,23 @@ def apply_confirmed_changes_atomic(approved_changes: list[dict[str, Any]]) -> tu
                     
                     # NOTE: For Property rename we prefer action=update (updates.name). For action=rename,
                     # targetName is the *new* name, so do not try to resolve by name.
-                    if target_type == "Property" and action != "rename" and not exists:
-                        resolved, candidates, selector_dbg = _resolve_property_target_id_tx(tx, change)
-                        if resolved == "__AMBIGUOUS__":
+                    if target_type == "Property" and not exists:
+                        # 옛 이름부터 차례로 찾는다(_property_selector_names). rename 은 옛 이름으로만.
+                        resolved, candidates, selector_dbg = None, [], ""
+                        for _name in _property_selector_names(change, approved_changes):
+                            resolved, candidates, selector_dbg = _resolve_property_target_id_tx(
+                                tx, change, _name,
+                            )
+                            if resolved:
+                                break
+                        if action == "rename":
+                            if resolved and resolved != "__AMBIGUOUS__":
+                                old_tid = change.get("targetId")
+                                for other in approved_changes:   # 같은 자리 표시 id 를 쓰는 초안도 함께
+                                    if other.get("targetType") == "Property" and other.get("targetId") == old_tid:
+                                        other["targetId"] = resolved
+                            # 못 찾으면 예전처럼 — 적용 단계가 건너뛴다(로그를 남긴다)
+                        elif resolved == "__AMBIGUOUS__":
                             msg = (
                                 "모호한 Property 대상입니다. 여러 후보가 유사합니다.\n"
                                 f"- selector: {selector_dbg}\n"
@@ -1667,7 +1722,7 @@ def apply_confirmed_changes_atomic(approved_changes: list[dict[str, Any]]) -> tu
                             )
                             errors.append(msg)
                             break
-                        if resolved:
+                        elif resolved:
                             SmartLogger.log(
                                 "INFO",
                                 "Property target resolved via fallback.",
@@ -1680,6 +1735,10 @@ def apply_confirmed_changes_atomic(approved_changes: list[dict[str, Any]]) -> tu
                                     "candidates": candidates,
                                 },
                             )
+                            old_tid = change.get("targetId")
+                            for other in approved_changes:   # 같은 자리 표시 id 를 쓰는 초안도 함께
+                                if other.get("targetType") == "Property" and other.get("targetId") == old_tid:
+                                    other["targetId"] = resolved
                             change["targetId"] = resolved
                         else:
                             # For ingestion pause feedback: if Property doesn't exist yet, skip this change
@@ -1728,6 +1787,14 @@ def apply_confirmed_changes_atomic(approved_changes: list[dict[str, Any]]) -> tu
                                 )
                                 errors.append(msg)
                                 break
+
+                # 위에서 Property 대상을 이름으로 찾아 targetId 를 바꿨으면 **바뀐 값**으로 본다.
+                # 예전에는 지역 변수(자리 표시 id `prop-noid-*`)로 다시 확인해 "없음 → 건너뜀"이 되어,
+                # 찾아 놓고도 저장되지 않았다(응답 200 · appliedChanges 0 — 2026-11-20 포스코 현장).
+                target_id = str(change.get("targetId") or "").strip()
+                # oldName 은 대상을 찾는 데만 쓴다(위) — 노드에 쓰는 값이 아니다.
+                if action == "update" and isinstance(change.get("updates"), dict):
+                    change["updates"].pop("oldName", None)
 
                 if action == "update":
                     # Check if target exists before validation
