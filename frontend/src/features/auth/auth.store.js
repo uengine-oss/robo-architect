@@ -17,6 +17,10 @@ import { detailText } from '@/app/apiError'
 const TOKEN_KEY = 'robo.auth.token'
 const PROJECT_KEY = 'robo.auth.project'
 const SSO_KEY = 'robo.auth.sso'
+const SSO_AUTO_KEY = 'robo.auth.sso.auto'      // 자동 SSO 시도 {n, at} — 무한 반복 방지
+const SSO_MANUAL_KEY = 'robo.auth.sso.manual'  // 이 탭에서 로그아웃함 — 자동 진입 안 함
+const SSO_AUTO_MAX = 2
+const SSO_AUTO_WINDOW_MS = 2 * 60 * 1000
 
 /**
  * 토큰은 **`sessionStorage`** 에 둔다. `localStorage` 가 아니다.
@@ -253,6 +257,9 @@ export const useAuthStore = defineStore('auth', () => {
       user.value = body.authenticated ? body.user : null
       status.value = body.status || (body.authenticated ? 'approved' : 'anonymous')
       if (!body.authenticated && !body.status) setToken(null)
+      if (body.authenticated) {
+        try { store().removeItem(SSO_AUTO_KEY) } catch { /* 저장소 막힘 */ }
+      }
     } catch {
       // 서버에 닿지 못한 것과 토큰이 죽은 것을 구별할 수 없다. 토큰은 지우지
       // 않고 익명으로 둔다 — 지우면 잠깐 끊겼을 때 다시 로그인하게 된다.
@@ -289,7 +296,11 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   /** SWP 로그인 페이지로 보낸다. 돌아오면 콜백이 세션을 만든다. */
-  async function ssoLogin() {
+  async function ssoLogin({ auto = false } = {}) {
+    if (!auto) {
+      // 사람이 직접 누른 것 — 로그아웃 뒤 막아 둔 자동 진입을 다시 연다
+      try { store().removeItem(SSO_MANUAL_KEY) } catch { /* 저장소 막힘 */ }
+    }
     const callback = `${window.location.origin}/api/auth/sso/valid`
     const r = await fetch(`/api/auth/sso/init?callbackUrl=${encodeURIComponent(callback)}`)
     if (!r.ok) throw new Error('SSO 를 시작할 수 없습니다.')
@@ -297,10 +308,61 @@ export const useAuthStore = defineStore('auth', () => {
     window.location.href = redirectUrl
   }
 
+  /**
+   * 로그인 화면이 뜨자마자 SWP 를 한 번 거쳐 오게 할지 (2026-11-23 · 포스코 현장).
+   *
+   * 토큰은 탭마다 따로(sessionStorage)라 새 탭은 늘 익명으로 시작한다. 그때마다 「SWP 로 로그인」을
+   * 누르게 했는데, SWP 세션(포털 로그인)이 살아 있으면 누를 이유가 없다 — 거쳐 오면 바로 돌아온다.
+   * SWP 세션이 없으면 SWP 로그인 화면이 뜬다. 판단을 SWP 세션에 맡기므로 "앱을 켜면 로그인부터"
+   * (자리를 비운 PC) 의도는 그대로다.
+   *
+   * 끝없이 돌지 않게: 2분 안에 두 번까지만 · 내가 로그아웃한 탭에서는 안 한다 · 승인 대기 · 거절은 안 한다.
+   */
+  function shouldAutoSso() {
+    if ((provider.value || {}).provider !== 'swp') return false
+    if (status.value !== 'anonymous' || token.value) return false
+    try {
+      if (store().getItem(SSO_MANUAL_KEY)) return false
+      const a = JSON.parse(store().getItem(SSO_AUTO_KEY) || 'null')
+      if (a && Date.now() - a.at < SSO_AUTO_WINDOW_MS && a.n >= SSO_AUTO_MAX) return false
+      return true
+    } catch {
+      return false   // 저장소가 막혀 횟수를 셀 수 없으면 자동으로 돌리지 않는다(무한 반복 방지)
+    }
+  }
+
+  async function autoSsoLogin() {
+    try {
+      const a = JSON.parse(store().getItem(SSO_AUTO_KEY) || 'null')
+      const fresh = a && Date.now() - a.at < SSO_AUTO_WINDOW_MS
+      store().setItem(SSO_AUTO_KEY, JSON.stringify({ n: fresh ? a.n + 1 : 1, at: fresh ? a.at : Date.now() }))
+    } catch {
+      return false
+    }
+    await ssoLogin({ auto: true })
+    return true
+  }
+
+  /** 콜백이 `/?sso=missing|invalid` 로 돌려보낸 사유를 한 번 꺼내고 주소에서 지운다. */
+  function takeSsoReturnReason() {
+    try {
+      const url = new URL(window.location.href)
+      const reason = url.searchParams.get('sso')
+      if (!reason) return null
+      url.searchParams.delete('sso')
+      window.history.replaceState(null, '', url.pathname + url.search + url.hash)
+      return reason
+    } catch {
+      return null
+    }
+  }
+
   function logout() {
     setToken(null)
     user.value = null
     status.value = 'anonymous'
+    // 로그아웃한 탭에서 바로 자동 진입하면 로그아웃이 안 된 것처럼 보인다 — 직접 누를 때까지 막는다
+    try { store().setItem(SSO_MANUAL_KEY, '1') } catch { /* 저장소 막힘 */ }
   }
 
   return {
@@ -309,5 +371,6 @@ export const useAuthStore = defineStore('auth', () => {
     authenticated, pending, rejected, isAdmin, enforced, enforcement, gate,
     setToken, setProject, setProjectError, setGraphError, setGraphOk,
     loadProvider, refresh, devLogin, ssoLogin, logout,
+    shouldAutoSso, autoSsoLogin, takeSsoReturnReason,
   }
 })

@@ -182,9 +182,19 @@ async def sso_init(request: Request, callbackUrl: str = Query(..., min_length=1)
 async def _handle_valid(request: Request, sso_token: str | None) -> RedirectResponse | HTMLResponse:
     settings = _require_swp()
 
-    # 토큰이 없거나 검증에 실패하면 SWP 로그인 홈으로 되돌려보낸다 (기준 구현 동작).
+    # 토큰이 없거나 검증에 실패하면 **우리 화면**으로 되돌린다 (2026-11-23).
+    # 전에는 기준 구현대로 SWP 로그인 홈(`SWP_SSO_LOGIN_URL` = swp.posco.net, EP 메인)으로 보냈다 —
+    # 포스코 현장: "로그인은 되는데 SWP 가 EP 메인을 돌려준다"(MSAEZ 는 MSAEZ 화면이 뜬다).
+    # 화면은 `?sso=` 를 보고 한 번 더 SSO 를 시도한다 — SWP 세션이 이제 있으므로 대개 바로 돌아온다.
     if not sso_token:
-        return RedirectResponse(settings.login_url, status_code=302)
+        SmartLogger.log(
+            "WARN",
+            "SWP SSO callback without ssoToken.",
+            category="auth.sso.missing_token",
+            # 값은 남기지 않는다 — SWP 가 무엇을 어떤 이름으로 보냈는지만(현장 원인 확인용).
+            params={**http_context(request), **await _callback_shape(request)},
+        )
+        return RedirectResponse("/?sso=missing", status_code=302)
 
     user, raw = await validate_sso_token(settings, sso_token)
 
@@ -197,7 +207,7 @@ async def _handle_valid(request: Request, sso_token: str | None) -> RedirectResp
             # 필요하면 SWP_SSO_LOG_RAW 로 한시적으로 켠다.
             params={**http_context(request), "raw_length": len(raw or "")},
         )
-        return RedirectResponse(settings.login_url, status_code=302)
+        return RedirectResponse("/?sso=invalid", status_code=302)
 
     SmartLogger.log(
         "INFO",
@@ -207,6 +217,22 @@ async def _handle_valid(request: Request, sso_token: str | None) -> RedirectResp
     )
 
     return sso_landing(_sign_in(request, user.to_dict(), source="swp"))
+
+
+async def _callback_shape(request: Request) -> dict:
+    """SWP 콜백에 무엇이 왔는지 — **이름만**(값 없음). 토큰이 다른 이름으로 오는지 현장에서 보려고."""
+    form_keys: list[str] = []
+    if request.method == "POST":
+        try:
+            form_keys = sorted((await request.form()).keys())
+        except Exception:
+            form_keys = ["<form parse failed>"]
+    return {
+        "method": request.method,
+        "query_keys": sorted(request.query_params.keys()),
+        "form_keys": form_keys,
+        "cookie_names": sorted(request.cookies.keys()),
+    }
 
 
 SSO_STASH_KEY = "robo.auth.sso"

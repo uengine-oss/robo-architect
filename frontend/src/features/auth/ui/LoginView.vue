@@ -27,9 +27,31 @@ function pick(account) {
 }
 const ssoAvailable = computed(() => (auth.provider || {}).provider === 'swp')
 
+/** SWP 세션을 확인하러 다녀오는 중 — 버튼 대신 안내만 보인다 */
+const autoSso = ref(false)
+
+const SSO_RETURN_TEXT = {
+  missing: 'SWP 로그인 결과를 받지 못했습니다.',
+  invalid: 'SWP 로그인 확인에 실패했습니다.',
+}
+
 onMounted(async () => {
+  const reason = auth.takeSsoReturnReason()
   await auth.loadProvider()
   if (devLogin.value.loginId) loginId.value = devLogin.value.loginId
+  // SWP 세션이 있으면 버튼을 누르지 않아도 들어간다(새 탭 · 콜백이 토큰 없이 돌아온 경우 포함)
+  if (auth.shouldAutoSso()) {
+    autoSso.value = true
+    try {
+      if (await auth.autoSsoLogin()) return
+    } catch (e) {
+      error.value = e.message || 'SSO 를 시작하지 못했습니다.'
+    }
+    autoSso.value = false
+  }
+  if (reason && !error.value) {
+    error.value = (SSO_RETURN_TEXT[reason] || 'SWP 로그인을 마치지 못했습니다.') + ' 다시 시도해 주세요.'
+  }
 })
 
 async function submitDev() {
@@ -91,7 +113,8 @@ async function submitSso() {
         <h1 class="login__title">로그인이 필요합니다</h1>
         <p class="login__desc">사내 인증으로 들어갑니다.</p>
 
-        <button v-if="ssoAvailable" class="login__primary" :disabled="busy" @click="submitSso">
+        <p v-if="autoSso" class="login__note">SWP 로그인을 확인하고 있습니다…</p>
+        <button v-else-if="ssoAvailable" class="login__primary" :disabled="busy" @click="submitSso">
           SWP 로 로그인
         </button>
         <p v-else class="login__note">
