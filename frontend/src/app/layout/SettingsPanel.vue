@@ -76,9 +76,19 @@ const LANGUAGE_PRESETS = [
 ]
 const CUSTOM_LANGUAGE = '__custom__'
 const customLanguage = ref(false)
+// 브라우저 기본값은 지역 없이 "ko" 처럼 올 수 있다 — 같은 언어의 목록 항목(ko-KR)으로 보인다.
+function presetFor(tag) {
+  const t = String(tag || '')
+  const exact = LANGUAGE_PRESETS.find((p) => p.value === t)
+  if (exact) return exact.value
+  if (!t.includes('-')) {
+    const same = LANGUAGE_PRESETS.find((p) => p.value.split('-')[0].toLowerCase() === t.toLowerCase())
+    if (same) return same.value
+  }
+  return null
+}
 const languageSelect = computed({
-  get: () => (customLanguage.value || !LANGUAGE_PRESETS.some((p) => p.value === languageStore.language)
-    ? CUSTOM_LANGUAGE : languageStore.language),
+  get: () => (customLanguage.value ? CUSTOM_LANGUAGE : (presetFor(languageStore.language) || CUSTOM_LANGUAGE)),
   set: (value) => {
     customLanguage.value = value === CUSTOM_LANGUAGE
     if (!customLanguage.value) languageStore.setLanguage(value)
