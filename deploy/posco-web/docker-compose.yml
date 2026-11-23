@@ -140,6 +140,8 @@ services:
       # AI — 사내 P-GPT 로만 나간다.
       LLM_PROVIDER: openai
       LLM_MODEL: gpt-4.1
+      # 환경설정 모델 목록에 보일 모델 — 쉼표 · * (예: gpt-4.1*,gpt-4o). 비면 게이트웨이가 주는 생성 모델 전부.
+      ROBO_LLM_MODELS_ALLOW: ${ROBO_LLM_MODELS_ALLOW:-}
       LLM_API_BASE: ${ROBO_AI_BASE_URL:?}
       OPENAI_BASE_URL: ${ROBO_AI_BASE_URL:?}
       OPENAI_API_KEY: ${ROBO_AI_API_KEY:?}

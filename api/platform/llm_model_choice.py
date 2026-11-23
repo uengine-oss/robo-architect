@@ -71,12 +71,32 @@ def is_chat_model(model_id: str) -> bool:
     return bool(model_id) and not any(word in low for word in _NON_CHAT)
 
 
+def _allow_patterns() -> list[str]:
+    """`ROBO_LLM_MODELS_ALLOW` — 쉼표로 나눈 이름 · `*` 와일드카드(예: `gpt-4.1*,gpt-4o`).
+
+    비면 게이트웨이가 주는 생성 모델 전부. 망마다 쓰는 모델이 달라 코드가 아니라 `.env` 로 정한다
+    (2026-11-20 포스코 현장: "모델 목록도 전부가 아니라 일부만").
+    """
+    raw = os.getenv("ROBO_LLM_MODELS_ALLOW") or ""
+    return [p.strip() for p in raw.split(",") if p.strip()]
+
+
+def is_allowed_model(model_id: str, patterns: list[str] | None = None) -> bool:
+    import fnmatch
+    pats = _allow_patterns() if patterns is None else patterns
+    if not pats or model_id == default_model():
+        return True   # 허용 목록이 없거나 기본 모델이면 늘 보인다
+    low = model_id.lower()
+    return any(fnmatch.fnmatchcase(low, p.lower()) for p in pats)
+
+
 def _parse_models(payload: Any) -> list[str]:
     rows = payload.get("data") if isinstance(payload, dict) else payload
     ids: list[str] = []
+    pats = _allow_patterns()
     for row in rows or []:
         mid = row.get("id") if isinstance(row, dict) else row
-        if isinstance(mid, str) and is_chat_model(mid.strip()):
+        if isinstance(mid, str) and is_chat_model(mid.strip()) and is_allowed_model(mid.strip(), pats):
             ids.append(mid.strip())
     return sorted(dict.fromkeys(ids))
 

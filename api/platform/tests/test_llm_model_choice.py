@@ -93,3 +93,15 @@ def test_resolve_model_in_llm_factory():
         assert _resolve_model("openai", "gpt-4.1") == "gpt-4.1"   # 호출부가 이름을 박았으면 그것
     finally:
         choice._SELECTED.reset(token)
+
+
+def test_allow_list_narrows_models_but_keeps_default(monkeypatch):
+    """`ROBO_LLM_MODELS_ALLOW` — 쓰는 모델만 보인다 · 기본 모델은 늘 보인다(2026-11-20 현장)."""
+    payload = {"data": [{"id": x} for x in (
+        "gpt-4.1", "gpt-4.1-mini", "gpt-4o", "o3-mini", "gpt-5.2", "text-embedding-3-small")]}
+    monkeypatch.setenv("ROBO_LLM_MODELS_ALLOW", "gpt-4.1*, GPT-5*")
+    assert choice._parse_models(payload) == ["gpt-4.1", "gpt-4.1-mini", "gpt-5.2"]
+    monkeypatch.setenv("ROBO_LLM_MODELS_ALLOW", "o3*")
+    assert choice._parse_models(payload) == ["gpt-4.1", "o3-mini"]   # 기본 gpt-4.1 은 남는다
+    monkeypatch.setenv("ROBO_LLM_MODELS_ALLOW", "")
+    assert len(choice._parse_models(payload)) == 5                  # 비면 전부(임베딩 제외)
