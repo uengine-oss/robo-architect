@@ -48,6 +48,9 @@ export const useEventModelingStore = defineStore('eventModeling', () => {
   // canvasProcessIds 는 이 집합에서 파생되므로, 여정 간 공유 프로세스가
   // 한 여정을 꺼도 잘못 사라지지 않는다.
   const activeItemIds = ref(new Set())
+  // 조회 전용 여정의 화면 — 그 화면이 일으키는 명령이 없어 프로세스로는 못 담는다.
+  // 화면과 그 화면이 보여 주는 ReadModel 만 캔버스에 올린다(2026-11-23).
+  const extraViewUiIds = ref(new Set())
 
   const allActors = computed(() => actorSwimlanes.value.map(a => a.actor))
   const totalCommands = computed(() => interactionCommands.value.length)
@@ -215,12 +218,16 @@ export const useEventModelingStore = defineStore('eventModeling', () => {
     const chains = processChains.value
     const edges = Array.isArray(data.uiFlowEdges) ? data.uiFlowEdges : []
 
-    // UI id → Set(chainId), chainId → chain
+    // UI id → Set(chainId) — **그 화면이 일으키는(첫 명령 앞의) 프로세스만**.
+    // 체인 단계에는 결과를 보여 주는 조회 화면(ReadModel → UI)도 들어 있다. 그것까지 이으면
+    // 조회 여정 하나가 그 목록을 갱신하는 모든 명령 체인을 끌고 들어왔다(2026-11-20 포스코 현장:
+    // "프로세스 하나를 눌러도 필터링이 제대로 안 됨" — 조회 여정에 명령 5 · UI 8).
     const uiToChains = new Map()
     const chainById = new Map()
     for (const ch of chains) {
       chainById.set(ch.id, ch)
       for (const s of ch.steps) {
+        if (s.type === 'command') break
         if (s.type !== 'ui') continue
         if (!uiToChains.has(s.id)) uiToChains.set(s.id, new Set())
         uiToChains.get(s.id).add(ch.id)
@@ -264,8 +271,11 @@ export const useEventModelingStore = defineStore('eventModeling', () => {
       .sort((a, b) => b[1].uiIds.size - a[1].uiIds.size)
     for (const [jid, g] of journeyList) {
       const chainIds = new Set()
+      const viewUiIds = []
       for (const uid of g.uiIds) {
-        for (const cid of (uiToChains.get(uid) || [])) chainIds.add(cid)
+        const own = uiToChains.get(uid)
+        if (own && own.size) for (const cid of own) chainIds.add(cid)
+        else viewUiIds.push(uid)   // 명령을 일으키지 않는 조회 화면
       }
       for (const cid of chainIds) coveredChainIds.add(cid)
       const steps = mergeSteps(chainIds)
@@ -277,6 +287,7 @@ export const useEventModelingStore = defineStore('eventModeling', () => {
         badge: g.edgeCount,
         steps,
         processIds: [...chainIds],
+        viewUiIds,
         uiCount: g.uiIds.size,
       })
     }
@@ -1012,12 +1023,15 @@ export const useEventModelingStore = defineStore('eventModeling', () => {
   function _recomputeFromActiveItems() {
     const procIds = new Set()
     const journeys = new Set()
+    const views = new Set()
     for (const it of journeyChains.value) {
       if (!activeItemIds.value.has(it.id)) continue
       for (const pid of it.processIds) procIds.add(pid)
+      for (const uid of (it.viewUiIds || [])) views.add(uid)
       if (it.journeyId) journeys.add(it.journeyId)
     }
     canvasProcessIds.value = procIds
+    extraViewUiIds.value = views
     activeJourneyIds.value = journeys
     _rebuildCanvas()
   }
@@ -1061,12 +1075,18 @@ export const useEventModelingStore = defineStore('eventModeling', () => {
     if (!data) return
 
     const selected = processChains.value.filter(p => canvasProcessIds.value.has(p.id))
-    if (selected.length === 0) {
+    const views = extraViewUiIds.value
+    if (selected.length === 0 && views.size === 0) {
       clearCanvas(); return
     }
 
     // ── 1. 선택된 프로세스의 노드 ID 수집 ───────────────────
     const cmdIds = new Set(), evtIds = new Set(), rmIds = new Set(), uiIds = new Set()
+    // 조회 화면 — 화면 + 그 화면이 보여 주는 ReadModel 만(그 목록을 갱신하는 명령은 넣지 않는다).
+    for (const uid of views) uiIds.add(uid)
+    data.flows.forEach(f => {
+      if (f.type === 'readmodel-to-ui' && views.has(f.targetId)) rmIds.add(f.sourceId)
+    })
     for (const proc of selected) {
       for (const step of proc.steps) {
         if (step.type === 'command') cmdIds.add(step.id)
@@ -1354,7 +1374,7 @@ export const useEventModelingStore = defineStore('eventModeling', () => {
 
   /** 캔버스 비우기 (_allResponse 유지) */
   function clearCanvas() {
-    canvasProcessIds.value = new Set()
+    canvasProcessIds.value = new Set(); extraViewUiIds.value = new Set()
     actorSwimlanes.value = []
     interactionCommands.value = []
     interactionReadModels.value = []
@@ -1421,7 +1441,7 @@ export const useEventModelingStore = defineStore('eventModeling', () => {
   }
 
   function reset() {
-    _allResponse.value = null; canvasProcessIds.value = new Set()
+    _allResponse.value = null; canvasProcessIds.value = new Set(); extraViewUiIds.value = new Set()
     actorSwimlanes.value = []; interactionCommands.value = []; interactionReadModels.value = []
     systemSwimlanes.value = []; flows.value = []; maxSequence.value = 1
     gateways.value = []; uiFlowEdges.value = []
