@@ -66,10 +66,6 @@ const currentSession = computed(() => sessions.value.find((s) => s.id === sessio
  */
 const designSessions = computed(() => sessions.value.filter((s) => (s.boundedContexts || 0) > 0))
 
-/** 판 표시 — 늘 "설계 ES · BC n". */
-function sessionLabel(s) {
-  return `설계 ES · BC ${s.boundedContexts}`
-}
 const fileCount = computed(() => result.value?.files?.length || 0)
 const overriddenCount = computed(
   () => templateFiles.value.filter((f) => f.source === 'db').length,
@@ -195,11 +191,11 @@ async function download() {
   <div class="tpl">
     <header class="tpl__toolbar">
       <div class="tpl__field" data-testid="tpl-session">
-        <label>프로젝트 · 설계</label>
+        <label>프로젝트 / 서비스</label>
         <!-- 판은 프로젝트마다 하나 — 고르지 않고 글자로만 보여 준다. -->
         <span class="tpl__static" :title="currentSession?.id || ''">
-          {{ serviceTitle }}<template v-if="currentSession"> · {{ sessionLabel(currentSession) }}</template>
-          <template v-else> · 설계 ES 없음</template>
+          {{ projectName }} / {{ serviceTitle }}
+          <template v-if="!currentSession"> · 설계 ES 없음</template>
         </span>
       </div>
 
