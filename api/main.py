@@ -431,6 +431,12 @@ app.add_middleware(IngestionProxyMiddleware)
 from api.platform.llm_model_choice import LlmModelChoiceMiddleware  # noqa: E402
 app.add_middleware(LlmModelChoiceMiddleware)
 
+# 망마다 끄는 기능(지금은 Figma) — 꺼지면 그 경로를 404 로 막는다. 중앙 위임(authority)보다 바깥이라
+# 위임되는 /api/auth/figma-* 도 여기서 막힌다. 화면은 /api/features 를 보고 진입점을 숨긴다.
+from api.platform.features import FeatureGateMiddleware, router as features_router  # noqa: E402
+app.add_middleware(FeatureGateMiddleware)
+app.include_router(features_router)
+
 # Starlette wraps later middleware around earlier ones. CORS must be outermost
 # so authentication failures also carry Access-Control-Allow-Origin; otherwise
 # the Figma iframe sees an opaque "Failed to fetch" instead of HTTP 401.

@@ -35,6 +35,9 @@ def register(app, registry) -> None:  # noqa: ARG001
         "SWP_SSO_VALID_CHECK_URL": "http://swpsso.posco.net/idms/U61/jsp/isValidSSO.jsp",
         "SWP_SSO_LOGIN_URL": "http://swp.posco.net",
         "SWP_EMAIL_FALLBACK_DOMAIN": "posco.local",
+        # 포스코는 Figma 를 쓰지 않는다(2026-11-23) — 사내 서버에 https 가 없어 Figma 앱이 플러그인 연결을 막는다.
+        # 쓰게 되면 .env 에 ROBO_FIGMA_ENABLED=true (api/platform/features.py).
+        "ROBO_FIGMA_ENABLED": "false",
     })
 
     # 표준항목 MCP(searchDataDictionary)의 필드 매핑은 `standard_items/mcp_provider.py` 에 있고

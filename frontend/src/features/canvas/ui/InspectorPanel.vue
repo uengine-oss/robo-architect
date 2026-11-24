@@ -1,6 +1,7 @@
 <script setup>
 import { computed, defineAsyncComponent, inject, nextTick, ref, watch } from 'vue'
 import { useCanvasStore } from '@/features/canvas/canvas.store'
+import { FIGMA_VISIBLE, FIGMA_OFF } from '@/app/featureVisibility'
 import { useAggregateViewerStore } from '@/features/canvas/aggregateViewer.store'
 import { useModelModifierStore } from '@/features/modelModifier/modelModifier.store'
 import { useTerminologyStore } from '@/features/terminology/terminology.store'
@@ -442,6 +443,13 @@ async function onDesignSave(data) {
     // when figmaNodeId is missing or binding is inactive. The frontend's
     // n.data.figmaNodeId is sometimes stale (canvas store cached pre-sync),
     // so a client-side gate would skip valid pushes.
+    // Figma 가 꺼진 서버(포스코)는 저장만 — Figma 경로는 404 로 막혀 있다
+    if (FIGMA_OFF.value) {
+      figmaPushStatus.value = 'saved'
+      figmaPushMessage.value = '저장했습니다.'
+      setTimeout(() => { figmaPushStatus.value = null }, 3000)
+      return
+    }
     figmaPushStatus.value = 'pushing'
     figmaPushMessage.value = 'Figma 동기화 중...'
     try {
@@ -2170,6 +2178,7 @@ const convertFailed = ref(false)
 // Default to whichever representation has data (Figma if a real sceneGraph
 // exists, else HTML). The user can switch freely with the toggle.
 const previewMode = ref(hasRealSceneGraph.value ? 'figma' : 'html')
+watch(FIGMA_OFF, (off) => { if (off && !hasRealSceneGraph.value) previewMode.value = 'html' }, { immediate: true })
 const htmlChatInput = ref('')
 const htmlEditing = ref(false)
 const htmlEditError = ref(null)
@@ -3839,7 +3848,9 @@ function updateVoFieldValue(fieldName, value) {
                    the template flow predates the plugin path and is no longer
                    needed now that bidirectional sync runs through the
                    binding). -->
+              <!-- Figma 로 옮기는 두 단추(클립보드 · .fig) — Figma 가 꺼진 서버에서는 없다 -->
               <button
+                v-if="FIGMA_VISIBLE"
                 class="ui-preview-panel__btn ui-preview-panel__btn--figma"
                 :class="{ 'ui-preview-panel__btn--copied': figSceneCopied }"
                 :disabled="!node.data?.sceneGraph || figSceneCopying"
@@ -3861,6 +3872,7 @@ function updateVoFieldValue(fieldName, value) {
                 </svg>
               </button>
               <button
+                v-if="FIGMA_VISIBLE"
                 class="ui-preview-panel__btn"
                 :disabled="!node.data?.sceneGraph || figFileExporting"
                 :title="figFileExporting ? 'Exporting...' : 'Download as .fig file'"
@@ -3901,7 +3913,7 @@ function updateVoFieldValue(fieldName, value) {
               <span class="label">Attached to:</span>
               <span class="value">{{ node.data?.attachedToName }}</span>
             </div>
-            <div v-if="node.data?.figmaNodeId" class="ui-preview-panel__attached" style="margin-top:4px;">
+            <div v-if="FIGMA_VISIBLE && node.data?.figmaNodeId" class="ui-preview-panel__attached" style="margin-top:4px;">
               <span class="label">Figma:</span>
               <span class="value" style="font-family:monospace;font-size:11px;">{{ node.data.figmaNodeId }}</span>
               <!-- Pull from Figma → reload Design with the current Figma frame
@@ -3942,8 +3954,9 @@ function updateVoFieldValue(fieldName, value) {
           </div>
 
           <div class="ui-preview-panel__content">
-            <!-- Mode toggle: HTML | Figma (both always available) -->
-            <div class="preview-mode-toggle">
+            <!-- Mode toggle: HTML | Figma (both always available)
+                 Figma 가 꺼진 서버에서는 HTML 만 — 다만 이미 디자인(sceneGraph)으로 만들어진 화면은 그대로 볼 수 있게 남긴다 -->
+            <div v-if="FIGMA_VISIBLE || hasRealSceneGraph" class="preview-mode-toggle">
               <button
                 type="button"
                 class="preview-mode-toggle__btn"

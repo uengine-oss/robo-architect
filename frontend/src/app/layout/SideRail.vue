@@ -8,6 +8,7 @@ import { useThemeStore } from '@/app/theme.store'
 import { useSessionStore } from '@/features/desktop-launcher/stores/session-store.js'
 import { LEGACY_FEATURES, legacyFeature, openLegacyFeature } from '@/features/analysis/legacyNav'
 import { visibleTabs } from '@/app/customer'
+import { FIGMA_VISIBLE } from '@/app/featureVisibility'
 import { useRuntimeStore } from '@/features/runtime-status/runtime.store.js'
 import { detectShellTabs, railTabTarget, wantsInPlace } from './railTabs'
 
@@ -159,7 +160,8 @@ const graphLabel = computed(() => session.graph || (session.isDesktop ? '—' : 
         <span class="rail__dot"></span>
         <span class="rail__graph">{{ graphLabel }}</span>
       </div>
-      <button class="rail__btn" title="Figma 연동" @click="openEv('robo:open-figma')">
+      <!-- Figma 가 꺼진 서버(포스코)에서는 단추부터 없다 — featureVisibility FIGMA_VISIBLE -->
+      <button v-if="FIGMA_VISIBLE" class="rail__btn" title="Figma 연동" @click="openEv('robo:open-figma')">
         <svg class="rail__ic" viewBox="0 0 24 24" aria-hidden="true" v-html="ICONS.figma"></svg>
       </button>
       <button class="rail__btn" title="설정" @click="openEv('robo:open-settings')">

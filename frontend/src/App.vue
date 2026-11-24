@@ -1,5 +1,6 @@
 <script setup>
 import { onMounted, onUnmounted, ref, computed, markRaw, provide, watch, nextTick } from 'vue'
+import { loadServerFeatures } from '@/app/featureVisibility'
 import SideRail from '@/app/layout/SideRail.vue'
 import TopBar from '@/app/layout/TopBar.vue'
 import NavigatorPanel from '@/features/navigator/ui/NavigatorPanel.vue'
@@ -520,6 +521,9 @@ onMounted(async () => {
   auth
     .loadProvider({ attempts: providerAttempts(), delayMs: 1000 })
     .then(() => auth.refresh())
+    // 망마다 끄는 기능(Figma) — 서버가 늦게 뜨면 provider 와 함께 다시 읽는다
+    .then(() => loadServerFeatures())
+  loadServerFeatures()
 
   // Load saved navigator width and collapsed state
   try {

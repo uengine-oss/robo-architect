@@ -9,6 +9,7 @@ import { useInspectorRequestStore } from '@/features/canvas/inspectorRequest.sto
 // 058 T029 — 준비 안 된 기능으로는 시작하지 않는다(이유를 말하고 막는다).
 import { useRuntimeStore } from '@/features/runtime-status/runtime.store.js'
 import { readClipboardHTML } from '@/features/canvas/ui/figma'
+import { FIGMA_VISIBLE, FIGMA_OFF } from '@/app/featureVisibility'
 import { emitDataChanged } from '@/app/lifecycle/dataLifecycle'
 import { openSse } from '@/app/sse'
 
@@ -312,7 +313,10 @@ watch(isFigmaWithComponentsEnabled, (enabled) => {
     uiGenerationMode.value = 'figma'
   }
 })
-loadFigmaBindingInfo()
+// Figma 가 꺼진 서버(포스코)는 HTML 와이어프레임만 쓴다 — 저장된 선택이 Figma 여도 HTML 로,
+// Figma 연결 정보도 읽지 않는다(그 경로는 404 로 막혀 있다).
+watch(FIGMA_VISIBLE, (on) => { if (on) loadFigmaBindingInfo() }, { immediate: true })
+watch(FIGMA_OFF, (off) => { if (off) uiGenerationMode.value = 'html' }, { immediate: true })
 
 // Source type is auto-detected from filename (*.report.md → legacy_report)
 
@@ -604,7 +608,7 @@ const hasExistingData = computed(() => {
 // Watch for modal open to check existing data + cache status
 watch(isOpen, async (newVal) => {
   if (newVal) {
-    await Promise.all([checkExistingData(), checkCacheStatus(), loadFigmaBindingInfo()])
+    await Promise.all([checkExistingData(), checkCacheStatus(), FIGMA_VISIBLE.value ? loadFigmaBindingInfo() : null])
   }
 })
 
@@ -2083,7 +2087,8 @@ function useSample() {
                   </div>
                   <div class="display-language-row" style="margin-left:16px;">
                     <span class="display-language-label">UI 생성</span>
-                    <div class="display-language-tabs">
+                    <span v-if="!FIGMA_VISIBLE" class="display-language-label" style="color:var(--color-text)">HTML 와이어프레임</span>
+                    <div v-else class="display-language-tabs">
                       <button
                         :class="['tab-btn', 'tab-btn--small', { active: uiGenerationMode === 'html' }]"
                         @click="uiGenerationMode = 'html'"

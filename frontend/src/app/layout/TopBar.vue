@@ -11,6 +11,7 @@ import { useBpmnStore } from '@/features/canvas/bpmn.store'
 import { useEventModelingStore } from '@/features/eventModeling/eventModeling.store'
 import PRDGeneratorModal from '@/features/prdGeneration/ui/PRDGeneratorModal.vue'
 import FigmaBindingModal from '@/features/figmaBinding/ui/FigmaBindingModal.vue'
+import { FIGMA_VISIBLE } from '@/app/featureVisibility'
 import SettingsPanel from './SettingsPanel.vue'
 
 const props = defineProps({
@@ -65,7 +66,7 @@ if (typeof window !== 'undefined') {
   window.addEventListener('robo:open-prd', () => { showPRDModal.value = true })
   // 왼쪽 레일의 설정 · Figma 단추
   window.addEventListener('robo:open-settings', () => { showSettingsPanel.value = true })
-  window.addEventListener('robo:open-figma', () => { showFigmaBindingModal.value = true })
+  window.addEventListener('robo:open-figma', () => { if (FIGMA_VISIBLE.value) showFigmaBindingModal.value = true })
 }
 
 function selectTab(tab) {
@@ -177,7 +178,7 @@ function selectTab(tab) {
     />
 
     <!-- Figma Binding Modal (feature 016) -->
-    <FigmaBindingModal v-model="showFigmaBindingModal" />
+    <FigmaBindingModal v-if="FIGMA_VISIBLE" v-model="showFigmaBindingModal" />
   </div>
 </template>
 

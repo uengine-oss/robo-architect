@@ -49,6 +49,8 @@ _OPEN_EXACT = frozenset({
     "/api/auth/provider", "/api/auth/sso/init", "/api/auth/sso/valid",
     "/api/auth/dev-login", "/api/auth/me",
     "/api/auth/figma-exchange",
+    # 망마다 끄는 기능 목록(참·거짓만) — 화면이 무엇을 숨길지 정한다(api/platform/features.py)
+    "/api/features",
 })
 # 정적 자산은 접두사로 연다 — 로그인 화면을 그리는 데 필요하다.
 _OPEN_PREFIX = ("/assets/", "/static/", "/@vite/", "/node_modules/")

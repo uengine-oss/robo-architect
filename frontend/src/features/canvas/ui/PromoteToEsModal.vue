@@ -1,5 +1,6 @@
 <script setup>
 import { ref, watch, computed } from 'vue'
+import { FIGMA_VISIBLE, FIGMA_OFF } from '@/app/featureVisibility'
 
 const props = defineProps({
   visible: { type: Boolean, default: false },
@@ -58,7 +59,9 @@ watch(() => props.visible, (open) => {
   uiGenerationMode.value = (stored === 'html' || stored === 'figma' || stored === 'figma-with-components')
     ? stored
     : 'figma'
-  loadFigmaBindingInfo()
+  // Figma 가 꺼진 서버(포스코)는 HTML 와이어프레임만 — 저장된 선택이 Figma 여도 HTML 로
+  if (FIGMA_OFF.value) uiGenerationMode.value = 'html'
+  if (FIGMA_VISIBLE.value) loadFigmaBindingInfo()
   checkCacheStatus()
 })
 
@@ -69,6 +72,7 @@ watch(isFigmaWithComponentsEnabled, (enabled) => {
 })
 
 function onSubmit() {
+  if (FIGMA_OFF.value) uiGenerationMode.value = 'html'
   localStorage.setItem(LANG_KEY, displayLanguage.value)
   localStorage.setItem(UI_MODE_KEY, uiGenerationMode.value)
   emit('submit', {
@@ -99,7 +103,8 @@ function onSubmit() {
           </div>
           <div class="row">
             <span class="row__label">UI 생성</span>
-            <div class="row__tabs">
+            <span v-if="!FIGMA_VISIBLE" class="row__value">HTML 와이어프레임</span>
+            <div v-else class="row__tabs">
               <button :class="['tab-btn', 'tab-btn--small', { active: uiGenerationMode === 'html' }]"
                       @click="uiGenerationMode = 'html'"
                       title="HTML 와이어프레임 템플릿을 생성합니다">HTML</button>
@@ -205,6 +210,10 @@ function onSubmit() {
   font-weight: 500;
   white-space: nowrap;
   min-width: 64px;
+}
+.row__value {
+  font-size: 0.8rem;
+  color: var(--color-text);
 }
 .row__tabs {
   display: flex;

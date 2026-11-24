@@ -1,4 +1,5 @@
 <script setup>
+import { FIGMA_VISIBLE } from '@/app/featureVisibility'
 import { computed, ref, watch } from 'vue'
 import { useTerminologyStore } from '@/features/terminology/terminology.store'
 import { useThemeStore } from '@/app/theme.store'
@@ -410,7 +411,7 @@ function reloadAfterClear() {
                   <div class="danger-warning__row">
                     <span class="danger-warning__label">남는 것</span>
                     <span class="danger-warning__value">
-                      Figma 연결과 스캔한 컴포넌트, 그리고 레거시 분석 결과(별도 저장소)
+                      <template v-if="FIGMA_VISIBLE">Figma 연결과 스캔한 컴포넌트, 그리고 </template>레거시 분석 결과(별도 저장소)
                     </span>
                   </div>
 

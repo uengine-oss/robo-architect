@@ -13,6 +13,7 @@
  * 기본 빌드(`VITE_CUSTOMER=default`)는 둘 다 보인다. export 이름은 쓰는 곳을 안 바꾸도록
  * 그대로 둔다.
  */
+import { ref, computed } from 'vue'
 import { customer } from './customer.js'
 
 /**
@@ -42,3 +43,38 @@ export const PROPOSALS_VISIBLE = customer.features.proposals !== false
  * 확장이 `features.constitution` 을 따로 적으면 그 값이 이긴다.
  */
 export const CONSTITUTION_VISIBLE = customer.features.constitution !== false
+
+// ── 서버가 정하는 것 (망마다 다름) ─────────────────────────────────────────────
+
+/**
+ * Figma 연동을 내보이나 — **서버 `.env`**(`ROBO_FIGMA_ENABLED`)가 정한다(2026-11-24).
+ *
+ * 위 둘(빌드 때 고객 확장)과 달리 런타임 값이다. 같은 포스코 이미지라도 사내 서버에 https 가 생기면
+ * 다시 켤 수 있어야 해서다. 포스코 확장은 서버 기본값을 꺼 둔다 — 사내 서버가 http 라 Figma 앱이
+ * 플러그인 연결을 막는다. 꺼지면 Figma 진입점(레일 단추 · 연동 창 · 생성 방식의 Figma 선택지 ·
+ * 인스펙터의 Figma 단추 · 요구사항 가져오기의 Figma 탭)을 모두 숨기고, 화면 생성은 HTML 와이어프레임만 쓴다.
+ *
+ * 모르는 동안(null)은 **숨긴다** — 꺼진 망에서 잠깐 보였다 사라지면 안 된다. 서버가 이 값을 모르는
+ * 옛 판(404)이면 지금처럼 보인다.
+ */
+const figmaFlag = ref(null)
+export const FIGMA_VISIBLE = computed(() => figmaFlag.value === true)
+/** 서버가 **꺼졌다고 답한** 뒤에만 참 — 저장된 선택을 HTML 로 바꾸는 일은 이걸로(모르는 동안 덮어쓰지 않게) */
+export const FIGMA_OFF = computed(() => figmaFlag.value === false)
+
+let featuresLoading = null
+export function loadServerFeatures() {
+  if (featuresLoading) return featuresLoading
+  featuresLoading = (async () => {
+    try {
+      const r = await fetch('/api/features')
+      if (r.status === 404) { figmaFlag.value = true; return }
+      if (!r.ok) throw new Error(String(r.status))
+      const body = await r.json()
+      figmaFlag.value = body.figma !== false
+    } catch {
+      featuresLoading = null   // 서버에 못 닿았다 — 다음에 다시 읽는다. 그동안은 숨긴 채로 둔다.
+    }
+  })()
+  return featuresLoading
+}
