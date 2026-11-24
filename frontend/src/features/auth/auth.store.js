@@ -320,6 +320,9 @@ export const useAuthStore = defineStore('auth', () => {
    */
   function shouldAutoSso() {
     if ((provider.value || {}).provider !== 'swp') return false
+    // 개발용 로그인이 켜진 서버(로컬 시험)는 사내망 밖이라 SWP 에 못 닿는다 — 자동으로 보내면 로그인 칸을
+    // 볼 수 없다. 현장 yml 은 개발용 로그인을 끈다(docker-compose.yml AUTH_DEV_LOGIN_ENABLED=false).
+    if (((provider.value || {}).devLogin || {}).enabled) return false
     if (status.value !== 'anonymous' || token.value) return false
     try {
       if (store().getItem(SSO_MANUAL_KEY)) return false
