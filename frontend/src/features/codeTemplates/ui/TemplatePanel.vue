@@ -58,20 +58,16 @@ const selected = ref(null)
 const hasChoice = computed(() => sets.value.length > 1)
 const currentSession = computed(() => sessions.value.find((s) => s.id === sessionId.value))
 /**
- * 코드를 만들 수 있는 판 = **설계 ES 가 있는(BC 가 하나 이상인) 세션**.
- * 프로젝트마다 보통 하나다 — 하나면 고를 것이 없으므로 선택창을 그리지 않고
- * 그 판을 바로 쓴다(2026-11-20 현장: "세션 선택창이 의미 없다 · 설계 ES 가 곧바로 선택").
- * 둘 이상일 때만(예전 분석 판이 남은 경우) 고르게 하고, 이름 대신 **갱신 시각**으로 구별한다.
+ * 코드를 만들 판 = **설계 ES 가 있는(BC 가 하나 이상인) 세션** — 프로젝트마다 하나다.
+ * 요구사항 수집을 다시 돌리면 이전 결과를 지우고 새로 만들기 때문이다. 그래서 고를 것이 없고,
+ * 판 이름도 보이지 않는다(2026-11-24: 전에는 BPM 프로세스 이름 중 가나다순 첫 번째가 판 이름처럼
+ * 붙어 "그 프로세스만 코드로 만드는" 것처럼 읽혔다). 혹시 둘 이상 남아 있으면 가장 최근 것을 쓴다.
  */
 const designSessions = computed(() => sessions.value.filter((s) => (s.boundedContexts || 0) > 0))
-const hasSessionChoice = computed(() => designSessions.value.length > 1)
 
-/** 판 이름 — 세션 아이디나 "이름 없는 판" 대신 프로젝트 이름 · 갱신 시각. */
+/** 판 표시 — 늘 "설계 ES · BC n". */
 function sessionLabel(s) {
-  const named = s.name && s.name !== s.id ? s.name : ''
-  const when = (s.updatedAt || '').replace('T', ' ').slice(0, 16)
-  const head = named || (hasSessionChoice.value && when ? `${when} 판` : '설계 ES')
-  return `${head} · BC ${s.boundedContexts}`
+  return `설계 ES · BC ${s.boundedContexts}`
 }
 const fileCount = computed(() => result.value?.files?.length || 0)
 const overriddenCount = computed(
@@ -198,14 +194,9 @@ async function download() {
   <div class="tpl">
     <header class="tpl__toolbar">
       <div class="tpl__field" data-testid="tpl-session">
-        <label>{{ hasSessionChoice ? '프로젝트 · 설계 판' : '프로젝트 · 설계' }}</label>
-        <!-- 판이 둘 이상일 때만 고른다. 하나면 그 판을 글자로만 보여 준다. -->
-        <select v-if="hasSessionChoice" v-model="sessionId">
-          <option v-for="s in designSessions" :key="s.id" :value="s.id" :title="s.id">
-            {{ projectName }} · {{ sessionLabel(s) }}
-          </option>
-        </select>
-        <span v-else class="tpl__static" :title="currentSession?.id || ''">
+        <label>프로젝트 · 설계</label>
+        <!-- 판은 프로젝트마다 하나 — 고르지 않고 글자로만 보여 준다. -->
+        <span class="tpl__static" :title="currentSession?.id || ''">
           {{ projectName }}<template v-if="currentSession"> · {{ sessionLabel(currentSession) }}</template>
           <template v-else> · 설계 ES 없음</template>
         </span>
