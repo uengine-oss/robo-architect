@@ -3804,7 +3804,10 @@ function updateVoFieldValue(fieldName, value) {
                 </svg>
                 <span v-else class="ui-preview-panel__btn-loading">...</span>
               </button>
+              <!-- 컴포넌트 라이브러리(.fig)로 디자인(sceneGraph) 만들기 — Figma 계열. Figma 가 꺼진 서버(포스코)는
+                   HTML 와이어프레임만 쓰므로 숨긴다(2026-11-24 현장 점검). -->
               <button
+                v-if="FIGMA_VISIBLE"
                 class="ui-preview-panel__btn"
                 :disabled="componentGenLoading"
                 :title="componentGenLoading ? 'Generating...' : 'Generate from component library (.fig)'"
@@ -4034,7 +4037,7 @@ function updateVoFieldValue(fieldName, value) {
                   <rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
                 </svg>
                 <p>아직 Figma 디자인이 없습니다</p>
-                <div class="ui-preview-empty__gen-group">
+                <div v-if="FIGMA_VISIBLE" class="ui-preview-empty__gen-group">
                   <button
                     v-if="node.data?.template"
                     class="ui-preview-empty__btn"
@@ -4157,7 +4160,7 @@ function updateVoFieldValue(fieldName, value) {
                 <rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
               </svg>
               <p style="margin:0;">디자인이 없습니다</p>
-              <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;">
+              <div v-if="FIGMA_VISIBLE" style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;">
                 <button
                   class="ui-preview-empty__btn"
                   :disabled="componentGenLoading"
