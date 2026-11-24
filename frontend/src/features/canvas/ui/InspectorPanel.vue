@@ -4051,8 +4051,9 @@ function updateVoFieldValue(fieldName, value) {
 
             <!-- ===================== HTML MODE ===================== -->
             <template v-else>
-              <!-- Read-only HTML wireframe + inline edit chat at the bottom -->
-              <div v-if="node.data?.template" class="ui-preview-html">
+              <!-- Read-only HTML wireframe — 수정 챗은 틀 밖(아래)에 따로 둔다(2026-11-24) -->
+              <template v-if="node.data?.template">
+              <div class="ui-preview-html">
                 <div class="ui-preview-frame__browser-bar">
                   <div class="browser-dots">
                     <span></span><span></span><span></span>
@@ -4066,13 +4067,20 @@ function updateVoFieldValue(fieldName, value) {
                   </div>
                   <div v-html="node.data?.template"></div>
                 </div>
-                <!-- Always-visible HTML edit chat bar -->
+              </div>
+              <!-- AI 로 화면 수정 — 와이어프레임 틀 안에 붙어 있으면 화면의 입력 칸처럼 보였다(2026-11-24 현장 지적).
+                   틀 밖에 제목 · 안내와 함께 둔다. 보내면 이 UI 의 HTML 이 바뀐다(되돌리기 없음). -->
+              <section class="ai-edit" aria-label="AI 로 화면 수정">
+                <div class="ai-edit__head">
+                  <span class="ai-edit__title">✨ AI 로 화면 수정</span>
+                  <span class="ai-edit__hint">보내면 이 화면의 HTML 이 바뀝니다</span>
+                </div>
                 <div class="preview-chat-bar">
                   <input
                     v-model="htmlChatInput"
                     type="text"
                     class="preview-chat-bar__input"
-                    placeholder="수정 요청을 입력하세요 (예: 로그인 버튼을 더 크게)"
+                    placeholder="예: 검색 조건에 기간을 추가해 줘 · 저장 버튼을 오른쪽 위로"
                     :disabled="htmlEditing"
                     @keyup.enter="sendHtmlEdit"
                   />
@@ -4081,10 +4089,11 @@ function updateVoFieldValue(fieldName, value) {
                     class="preview-chat-bar__send"
                     :disabled="htmlEditing || !htmlChatInput.trim()"
                     @click="sendHtmlEdit"
-                  >{{ htmlEditing ? '…' : '전송' }}</button>
+                  >{{ htmlEditing ? '수정 중…' : '수정' }}</button>
                 </div>
                 <div v-if="htmlEditError" class="inspector-alert error">{{ htmlEditError }}</div>
-              </div>
+              </section>
+              </template>
 
               <!-- No HTML template yet -->
               <div v-else class="ui-preview-empty">
@@ -7052,13 +7061,33 @@ function updateVoFieldValue(fieldName, value) {
   overflow: auto;
 }
 
-/* Prompt-edit chat bar (HTML mode, always visible at the bottom) */
+/* AI 로 화면 수정 — 와이어프레임 틀 밖, 인스펙터 색으로 (틀 안 입력 칸과 헷갈리지 않게) */
+.ai-edit {
+  margin-top: 10px;
+  padding: 8px 10px 10px;
+  border: 1px dashed var(--color-command, #4a8cff);
+  border-radius: var(--radius-md);
+  background: rgba(74, 140, 255, 0.06);
+}
+.ai-edit__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.ai-edit__title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--color-text, #e6e6e6);
+}
+.ai-edit__hint {
+  font-size: 11px;
+  color: var(--color-text-light, #9aa0a6);
+}
 .preview-chat-bar {
   display: flex;
   gap: 6px;
-  padding: 8px;
-  border-top: 1px solid #e9ecef;
-  background: #f8f9fa;
 }
 .preview-chat-bar__input {
   flex: 1;

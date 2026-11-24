@@ -34,39 +34,78 @@ def _load_ui_context(ui_node_id: str) -> dict | None:
                    ui.description AS description,
                    ui.attachedToType AS attachedToType,
                    ui.attachedToName AS attachedToName,
+                   ui.attachedToId AS attachedToId,
                    ui.template AS template,
                    bc.name AS bcName
             """,
             id=ui_node_id,
         ).single()
-    return dict(rec) if rec else None
+        if not rec:
+            return None
+        ctx = dict(rec)
+        # 2026-11-24: 생성 단계와 같은 재료 — 붙은 Command · ReadModel 의 필드와 목록/상세 구분
+        ctx["fields"] = []
+        ctx["multiple"] = None
+        kind = ctx.get("attachedToType")
+        if kind in ("Command", "ReadModel") and ctx.get("attachedToId"):
+            try:
+                rows = session.run(
+                    f"""
+                    MATCH (n:{kind} {{id: $id}})-[:HAS_PROPERTY]->(p:Property)
+                    RETURN p.name as name, p.displayName as displayName, p.type as type,
+                           p.isRequired as isRequired, p.description as description
+                    """,
+                    id=ctx["attachedToId"],
+                )
+                ctx["fields"] = [dict(r) for r in rows if r and r.get("name")]
+                if kind == "ReadModel":
+                    m = session.run("MATCH (n:ReadModel {id: $id}) RETURN n.isMultipleResult as m",
+                                    id=ctx["attachedToId"]).single()
+                    ctx["multiple"] = m["m"] if m else None
+            except Exception:  # noqa: BLE001 — 재료가 없으면 예전처럼 만든다
+                pass
+    return ctx
+
+
+_STYLE_RE = None
+
+
+def _strip_style(html: str) -> str:
+    """LLM 에 보낼 때는 테마 CSS 를 뺀다 — 화면 구조만 보면 된다. 돌려받은 뒤 normalize 가 다시 넣는다."""
+    import re
+
+    global _STYLE_RE
+    if _STYLE_RE is None:
+        _STYLE_RE = re.compile(r"(?is)<\s*style\b[^>]*>.*?<\s*/\s*style\s*>")
+    return _STYLE_RE.sub("", html or "").strip()
 
 
 def build_prompts(ctx: dict, instruction: str = "", display_lang: str = "ko") -> tuple[str, str, str]:
-    """(system_prompt, user_prompt, ui_name) — LLM 없이 시험할 수 있게 떼어 둔다."""
+    """(system_prompt, user_prompt, ui_name) — LLM 없이 시험할 수 있게 떼어 둔다.
+
+    2026-11-24: 처음 생성(ES 승격)과 **같은 규칙**을 쓴다 — 시스템 프롬프트 · 모델 필드 · 화면 종류(입력 폼 /
+    조회 목록 / 조회 상세). 전에는 이 수정 챗만 옛 규칙(스타일 직접 작성 · 필드 없음)이라 고칠수록 어긋났다.
+    """
+    from api.features.ingestion.workflow.phases.ui_wireframes import (
+        _UI_WIREFRAME_SYSTEM_PROMPT,
+        _html_screen_prompt,
+        _rm_is_multiple,
+    )
+
     ui_name = ctx.get("displayName") or ctx.get("name") or "Wireframe"
     ui_desc = ctx.get("description") or ""
     attached_type = ctx.get("attachedToType") or ""
     attached_name = ctx.get("attachedToName") or ""
     bc_name = ctx.get("bcName") or ""
-    existing_template = ctx.get("template") or ""
+    existing_template = _strip_style(ctx.get("template") or "")
+    fields = ctx.get("fields") or []
 
     lang_instruction = (
         "All visible text MUST be written in Korean (한글)."
         if display_lang == "ko"
         else "All visible text MUST be written in English."
     )
-
-    system_prompt = (
-        "You generate a modern UI wireframe as an HTML fragment for a single "
-        "screen (Ant Design / Material-like). Output rules (STRICT):\n"
-        "- Output ONLY the HTML fragment. No markdown fences, no <html>/<head>/<body>.\n"
-        "- Wrap everything in a single <div class=\"wf-root\">…</div>.\n"
-        "- Use semantic class names (wf-appbar, wf-card, wf-table, wf-input, "
-        "wf-btn, wf-btn--primary) and an inline <style> scoped under .wf-root.\n"
-        "- No external resources (no <script>, no url(), no @import, no on* handlers).\n"
-        f"- {lang_instruction}\n"
-    )
+    system_prompt = f"{_UI_WIREFRAME_SYSTEM_PROMPT}\n- {lang_instruction}\n"
 
     context = (
         f"Screen: {ui_name}\n"
@@ -74,21 +113,21 @@ def build_prompts(ctx: dict, instruction: str = "", display_lang: str = "ko") ->
         + (f"Attached to: {attached_type} {attached_name}\n" if attached_name else "")
         + (f"Description: {ui_desc}\n" if ui_desc else "")
     )
+    kind = "ReadModel" if attached_type == "ReadModel" else "Command"
+    # 화면 종류 · 필드 규칙(생성 단계와 같은 문장)
+    rules = _html_screen_prompt(kind, context.strip(), fields, multiple=_rm_is_multiple(ctx.get("multiple")))
 
     if instruction and existing_template:
         user_prompt = (
-            f"{context}\n"
-            "Here is the CURRENT wireframe HTML:\n"
+            f"{rules}\n\n"
+            "Here is the CURRENT wireframe HTML (styles omitted — keep using the wf-* classes):\n"
             f"```html\n{existing_template}\n```\n\n"
-            f"Apply this change and return the FULL updated HTML fragment:\n{instruction}"
+            f"Apply this change and return the FULL updated HTML fragment. Change only what is asked:\n{instruction}"
         )
     elif instruction:
-        user_prompt = f"{context}\nCreate a wireframe with this requirement:\n{instruction}"
+        user_prompt = f"{rules}\n\nAdditional requirement from the user:\n{instruction}"
     else:
-        user_prompt = (
-            f"{context}\nCreate a clean, realistic wireframe for this screen. "
-            "Use labels and placeholders that fit the domain, not generic ones."
-        )
+        user_prompt = rules
     return system_prompt, user_prompt, ui_name
 
 
