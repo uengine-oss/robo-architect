@@ -33,6 +33,7 @@ class NormalizeReport:
 
     # Wrapping/theme
     added_root_wrapper: bool = False
+    injected_theme_css: bool = False
     root_already_present: bool = False
     ensured_root_attrs: bool = False
     theme_selected: WireframeTheme = "ant"
@@ -267,6 +268,15 @@ def _ensure_root_wrapper(
             if s2 != s:
                 s = s2
                 report.ensured_root_attrs = True
+
+        # 스타일이 없으면 테마 CSS 를 넣는다 (2026-11-24) — 화면(인스펙터 미리보기)은 wf-* 를 스스로 입히지
+        # 않는다. 전에는 LLM 이 쓴 <style> 이 범위 밖이라 지워지면 맨 HTML 로 보였고, 대체 틀만 멀쩡해 보였다.
+        if re.search(r"<\s*style\b", s, re.IGNORECASE) is None:
+            css = _modern_scoped_css(theme=theme)
+            s2 = re.sub(r"^(\s*<div\b[^>]*>)", lambda m: f"{m.group(1)}\n  <style>\n{css}\n  </style>", s, count=1)
+            if s2 != s:
+                s = s2
+                report.injected_theme_css = True
 
         report.theme_selected = theme
         return s
@@ -541,6 +551,42 @@ def _modern_scoped_css(*, theme: WireframeTheme) -> str:
 .wf-root .wf-state--error {{
   border-color: {accent2};
 }}
+
+/* 2026-11-24: 필드 아래 안내(기본값 · 형식 예) — 오류 상자(wf-state)와 구분 */
+.wf-root .wf-help {{
+  margin-top: 4px;
+  color: {muted};
+  font-size: 11px;
+}}
+
+/* 조회(상세) 화면의 항목 · 값 쌍 */
+.wf-root .wf-kv {{
+  display: grid;
+  grid-template-columns: minmax(120px, 30%) 1fr;
+  gap: 8px 16px;
+  font-size: 13px;
+}}
+.wf-root .wf-kv dt {{ color: {muted}; }}
+.wf-root .wf-kv dd {{ margin: 0; }}
+
+/* 루트 바로 아래 카드(wf-main 없이 온 HTML) */
+.wf-root > .wf-card,
+.wf-root > form,
+.wf-root > section {{
+  margin: 14px;
+}}
+.wf-root select.wf-input,
+.wf-root textarea.wf-input {{
+  width: 100%;
+}}
+/* 글자 없는 단추(빈 아이콘 자리)는 숨긴다 — 동그라미만 남아 제목을 밀어낸다 */
+.wf-root .wf-btn:empty {{ display: none; }}
+/* 좁은 패널(인스펙터)에서 표가 한 글자씩 꺾이지 않게 — 칸은 한 줄, 넘치면 가로 스크롤 */
+.wf-root .wf-card__body {{ overflow-x: auto; }}
+.wf-root .wf-table th,
+.wf-root .wf-table td {{ white-space: nowrap; }}
+.wf-root .wf-appbar > .wf-title:first-child,
+.wf-root .wf-appbar > .wf-appbar__left:first-child {{ margin-right: auto; }}
 """.strip()
 
 
@@ -553,7 +599,8 @@ def fallback_ui_template(*, ui_name: str, theme: WireframeTheme, hint_text: str 
     content = _deterministic_sections(ui_name=title, hint_text=hint_text or "")
     report = NormalizeReport()
     wrapped = _ensure_root_wrapper(content, ui_name=title, theme=theme, report=report)
-    return wrapped
+    # 대체 틀 표시 — 다시 생성할 때 "이미 있는 HTML" 로 재사용하지 않게(ui_wireframes._is_fallback_template)
+    return wrapped.replace('data-wf-root="1"', 'data-wf-root="1" data-wf-fallback="1"', 1)
 
 
 def _deterministic_sections(*, ui_name: str, hint_text: str) -> str:

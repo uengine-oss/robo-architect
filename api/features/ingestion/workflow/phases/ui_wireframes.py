@@ -110,9 +110,7 @@ _UI_WIREFRAME_SYSTEM_PROMPT = """You generate a modern UI wireframe HTML fragmen
 - Do NOT include <script> tags.
 - Do NOT include inline event handlers like onclick=, onload=, etc.
 - Do NOT use javascript: URLs.
-- You MAY include a <style> block, but:
-  - Every selector MUST be scoped under `.wf-root`
-  - MUST NOT use @import or url(...)\n\nRoot container (MUST):\n- The fragment MUST start with a root container like:\n  <div class=\"wf-root wf-theme-ant\" data-wf-root=\"1\"> ... </div>\n  or\n  <div class=\"wf-root wf-theme-material\" data-wf-root=\"1\"> ... </div>\n\nModern UI quality requirements:\n- Use an App Bar / Toolbar at the top (title + primary actions).\n- Use Card-based sections.\n- For table/list screens: include a table toolbar (search/filter/actions), column headers, row actions, and pagination area.\n- For form screens: use a 2-column grid layout, labels + help/validation placeholders, primary/secondary button group.\n- Optionally include tabs/segments, chips/badges, and empty/loading/error state placeholders.\n- No JS behavior; structure only. Prefer accessible attributes (aria-*, role).\n\nPrefer these classes to match the preview styling:\n- wf-appbar, wf-title, wf-subtitle, wf-card, wf-card__header, wf-card__title, wf-card__body,\n  wf-actions, wf-btn, wf-btn--primary, wf-input, wf-label, wf-grid, wf-col-6, wf-col-12,\n  wf-table, wf-table__toolbar, wf-pagination, wf-chip, wf-badge, wf-state, wf-state--error, wf-empty\n"""
+- Do NOT include a <style> block or inline layout CSS — the host app styles the `wf-*` classes below.\n\nRoot container (MUST):\n- The fragment MUST start with a root container like:\n  <div class=\"wf-root wf-theme-ant\" data-wf-root=\"1\"> ... </div>\n  or\n  <div class=\"wf-root wf-theme-material\" data-wf-root=\"1\"> ... </div>\n\nModern UI quality requirements:\n- Use an App Bar / Toolbar at the top (title + primary actions).\n- Use Card-based sections.\n- For table/list screens: include a table toolbar (search/filter/actions), column headers, row actions, and pagination area.\n- For form screens: use a 2-column grid layout, labels + help/validation placeholders, primary/secondary button group.\n- Optionally include tabs/segments, chips/badges, and empty/loading/error state placeholders.\n- No JS behavior; structure only. Prefer accessible attributes (aria-*, role).\n- Put the screen's primary action in ONE place only (form footer for input screens). Do not repeat Save/Submit in both the app bar and the form.\n- Helper text under a field (default value, format example) uses `wf-help`, NOT `wf-state`. `wf-state` is only for loading / empty / error states.\n- When a field list is given, use exactly those fields (their display names as labels) — do not invent other business fields.\n- Fill read-only values, table rows and examples with realistic sample data for this domain. Never show the ids/UUIDs that appear in this prompt.\n- App bar: the title comes first (left); actions, if any, after it (right). Every button has visible text — no empty icon buttons.\n\nPrefer these classes to match the preview styling:\n- wf-appbar, wf-title, wf-subtitle, wf-card, wf-card__header, wf-card__title, wf-card__body,\n  wf-actions, wf-btn, wf-btn--primary, wf-input, wf-label, wf-grid, wf-col-6, wf-col-12,\n  wf-table, wf-table__toolbar, wf-pagination, wf-chip, wf-badge, wf-help, wf-kv (dl with dt/dd for read-only detail), wf-state, wf-state--error, wf-empty\n"""
 
 
 
@@ -138,6 +136,92 @@ def _fetch_command_events_best_effort(ctx: IngestionWorkflowContext, command_id:
         return []
 
 
+def _fetch_fields_best_effort(ctx: IngestionWorkflowContext, label: str, node_id: str) -> list[dict]:
+    """화면에 올릴 필드 — Command · ReadModel 의 Property(이름 · 표시 이름 · 타입 · 필수 · 설명).
+
+    전에는 프롬프트에 필드가 없어 LLM 이 항목을 지어냈다(2026-11-24 시험: 모델에 없는 '신청인 이름' · '연락처').
+    """
+    if not node_id or label not in ("Command", "ReadModel"):
+        return []
+    try:
+        with ctx.client.session() as session:
+            rows = session.run(
+                f"""
+                MATCH (n:{label} {{id: $id}})-[:HAS_PROPERTY]->(p:Property)
+                RETURN p.name as name, p.displayName as displayName, p.type as type,
+                       p.isRequired as isRequired, p.description as description
+                """,
+                id=node_id,
+            )
+            return [dict(r) for r in rows if r and r.get("name")]
+    except Exception:
+        return []
+
+
+def _fields_text(fields: list[dict]) -> str:
+    if not fields:
+        return ""
+    lines = []
+    for f in fields[:40]:
+        label = (f.get("displayName") or f.get("name") or "").strip()
+        bits = [str(f.get("name") or ""), str(f.get("type") or "").strip()]
+        if f.get("isRequired"):
+            bits.append("required")
+        desc = (f.get("description") or "").strip().replace("\n", " ")[:80]
+        lines.append(f"- {label} ({', '.join(b for b in bits if b)})" + (f" — {desc}" if desc else ""))
+    return "\n".join(lines)
+
+
+def _html_screen_prompt(kind: str, base_prompt: str, fields: list[dict], *, multiple: bool | None = None) -> str:
+    """HTML 와이어프레임 요청 — 화면 종류(입력 · 목록 · 상세)와 실제 필드를 함께 준다 (2026-11-24)."""
+    fields_txt = _fields_text(fields)
+    if kind == "Command":
+        screen = (
+            "Screen type: INPUT FORM for this command.\n"
+            "- One card with the form fields (2-column grid), validation/help placeholders, "
+            "and ONE footer button group (primary = the command action, secondary = 취소/초기화).\n"
+            "- The app bar shows only the title (and at most a back/close action)."
+        )
+        avoid = 'not generic "Label" or "Input"'
+    else:
+        if multiple is False:
+            screen = (
+                "Screen type: READ-ONLY DETAIL view of this read model.\n"
+                "- Show values as label/value pairs in a <dl class='wf-kv'> (no inputs, no Save/Submit). "
+                "Header actions only for navigation or refresh."
+            )
+        else:
+            screen = (
+                "Screen type: READ-ONLY LIST of this read model.\n"
+                "- Table toolbar (search/filter), columns = the fields, row action (상세), pagination. "
+                "No input form, no Save/Submit."
+            )
+        avoid = 'not generic "Label" or "Column"'
+    field_block = (
+        f"\n\nFields (use exactly these as the form fields / columns, labels = display names):\n{fields_txt}"
+        if fields_txt else ""
+    )
+    return (
+        f"Generate a wireframe HTML template.\n\n{base_prompt}{field_block}\n\n{screen}\n\n"
+        f"Use labels and placeholders that fit this domain, {avoid}. Output ONLY the HTML fragment."
+    )
+
+
+def _rm_is_multiple(v) -> bool | None:
+    """ReadModel.isMultipleResult — 'list' · 'collection' · 'single result'(prompts.py 규칙). 모르면 None(목록)."""
+    if v is None or v == "":
+        return None
+    if isinstance(v, bool):
+        return v
+    t = str(v).strip().lower()
+    return not ("single" in t or t in ("false", "0", "no", "one"))
+
+
+def _is_fallback_template(t: str | None) -> bool:
+    """생성에 실패했거나 생성하지 않았을 때 들어간 대체 틀인가 — 다시 생성할 때 재사용하지 않는다."""
+    return bool(t) and ("data-wf-fallback" in t or "Loading state placeholder" in t)
+
+
 def _existing_ui_template_best_effort(ctx: IngestionWorkflowContext, ui_id: str) -> str | None:
     """
     If a UI already exists with a non-empty template, reuse it and avoid an extra LLM call.
@@ -148,7 +232,8 @@ def _existing_ui_template_best_effort(ctx: IngestionWorkflowContext, ui_id: str)
         with ctx.client.session() as session:
             rec = session.run("MATCH (ui:UI {key: $key}) RETURN ui.template as template", key=ui_id).single()
             t = rec.get("template") if rec else None
-            if isinstance(t, str) and t.strip():
+            # 대체 틀(빈 틀)은 "이미 있는 HTML" 이 아니다 — 재사용하면 다시 생성해도 영영 빈 틀이다(2026-11-24)
+            if isinstance(t, str) and t.strip() and not _is_fallback_template(t):
                 return t
     except Exception:
         return None
@@ -665,26 +750,23 @@ async def _create_command_ui(
                 final_template = ""
                 norm_report = {"mode": "figma", "html_skipped": True}
             else:
-                # --- Try component-based (open-pencil) first ---
-                sg = await _generate_scene_graph(ctx, base_prompt, ui_display_name)
-                if sg is not None:
-                    import json as _json
-                    scene_graph_json = _json.dumps(sg, ensure_ascii=False)
-                    # Still generate a minimal HTML template for backward compat
-                    final_template, norm_report = normalize_ui_template(
-                        "",
-                        ui_name=ui_name,
-                        theme_hint=theme_hint,
-                    )
-                else:
-                    # --- Fallback to HTML generation ---
-                    html_prompt = f"Generate a wireframe HTML template.\n\n{base_prompt}\n\nUse labels and placeholders that fit this domain, not generic \"Label\" or \"Input\". Output ONLY the HTML fragment."
-                    raw_html = await _llm_invoke_to_html(ctx, html_prompt)
-                    final_template, norm_report = normalize_ui_template(
-                        str(raw_html),
-                        ui_name=ui_name,
-                        theme_hint=theme_hint,
-                    )
+                # --- HTML 방식: HTML 와이어프레임을 늘 실제로 만든다 (2026-11-24) ---
+                # 전에는 컴포넌트 디자인(sceneGraph)이 되면 HTML 칸에 빈 틀만 넣었다 — Figma 를 끄고 HTML 만
+                # 보는 서버(포스코)에서는 모든 화면이 같은 빈 틀이었다. 디자인 보기는 Figma 가 켜진 서버에서만 같이 만든다.
+                from api.platform.features import figma_enabled  # noqa: PLC0415
+                if figma_enabled():
+                    sg = await _generate_scene_graph(ctx, base_prompt, ui_display_name)
+                    if sg is not None:
+                        import json as _json
+                        scene_graph_json = _json.dumps(sg, ensure_ascii=False)
+                fields = await asyncio.to_thread(_fetch_fields_best_effort, ctx, "Command", cmd_id)
+                html_prompt = _html_screen_prompt("Command", base_prompt, fields)
+                raw_html = await _llm_invoke_to_html(ctx, html_prompt)
+                final_template, norm_report = normalize_ui_template(
+                    str(raw_html),
+                    ui_name=ui_name,
+                    theme_hint=theme_hint,
+                )
 
         ui = await asyncio.wait_for(
             asyncio.to_thread(
@@ -847,25 +929,23 @@ async def _create_readmodel_ui(
                 final_template = ""
                 norm_report = {"mode": "figma", "html_skipped": True}
             else:
-                # --- Try component-based (open-pencil) first ---
-                sg = await _generate_scene_graph(ctx, base_prompt, ui_display_name)
-                if sg is not None:
-                    import json as _json
-                    scene_graph_json = _json.dumps(sg, ensure_ascii=False)
-                    final_template, norm_report = normalize_ui_template(
-                        "",
-                        ui_name=ui_name,
-                        theme_hint=theme_hint,
-                    )
-                else:
-                    # --- Fallback to HTML generation ---
-                    html_prompt = f"Generate a wireframe HTML template.\n\n{base_prompt}\n\nUse labels and placeholders that fit this read model, not generic \"Label\" or \"Column\". Output ONLY the HTML fragment."
-                    raw_html = await _llm_invoke_to_html(ctx, html_prompt)
-                    final_template, norm_report = normalize_ui_template(
-                        str(raw_html),
-                        ui_name=ui_name,
-                        theme_hint=theme_hint,
-                    )
+                # --- HTML 방식: HTML 와이어프레임을 늘 실제로 만든다 (2026-11-24) — Command 쪽과 같은 이유 ---
+                from api.platform.features import figma_enabled  # noqa: PLC0415
+                if figma_enabled():
+                    sg = await _generate_scene_graph(ctx, base_prompt, ui_display_name)
+                    if sg is not None:
+                        import json as _json
+                        scene_graph_json = _json.dumps(sg, ensure_ascii=False)
+                fields = await asyncio.to_thread(_fetch_fields_best_effort, ctx, "ReadModel", rm_id)
+                html_prompt = _html_screen_prompt(
+                    "ReadModel", base_prompt, fields, multiple=_rm_is_multiple(rm.get("isMultipleResult")),
+                )
+                raw_html = await _llm_invoke_to_html(ctx, html_prompt)
+                final_template, norm_report = normalize_ui_template(
+                    str(raw_html),
+                    ui_name=ui_name,
+                    theme_hint=theme_hint,
+                )
 
         ui = await asyncio.wait_for(
             asyncio.to_thread(
