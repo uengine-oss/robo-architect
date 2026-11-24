@@ -29,6 +29,7 @@ const PACKAGE_PREFIX = customer.templates.packagePrefix
 const projects = useProjectsStore()
 /** 지금 고른 프로젝트의 이름. 세션은 이 프로젝트 안의 것들이다. */
 const projectName = computed(() => projects.currentName || '프로젝트')
+const serviceTitle = computed(() => projects.currentServiceName || projectName.value)
 
 const sets = ref([])
 const setName = ref(DEFAULT_SET)
@@ -90,7 +91,7 @@ function suggestServiceId(name) {
  * **비워 둔다** — 비면 생성 버튼이 입력을 요구하므로, 지어내는 것보다 낫다.
  */
 function suggestedServiceId() {
-  return suggestServiceId(projectName.value) || suggestServiceId(currentSession.value?.name) || ''
+  return suggestServiceId(serviceTitle.value) || suggestServiceId(projectName.value) || ''
 }
 
 // 기본값을 채워 두되, 사용자가 고친 항목은 건드리지 않는다.
@@ -197,7 +198,7 @@ async function download() {
         <label>프로젝트 · 설계</label>
         <!-- 판은 프로젝트마다 하나 — 고르지 않고 글자로만 보여 준다. -->
         <span class="tpl__static" :title="currentSession?.id || ''">
-          {{ projectName }}<template v-if="currentSession"> · {{ sessionLabel(currentSession) }}</template>
+          {{ serviceTitle }}<template v-if="currentSession"> · {{ sessionLabel(currentSession) }}</template>
           <template v-else> · 설계 ES 없음</template>
         </span>
       </div>

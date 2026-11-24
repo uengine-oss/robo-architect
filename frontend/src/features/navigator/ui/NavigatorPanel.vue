@@ -8,6 +8,7 @@ import { useDebugMode } from '@/app/debug'
 import { useDataRefresh } from '@/app/lifecycle/dataLifecycle'
 import TreeNode from './TreeNode.vue'
 import { CONSTITUTION_VISIBLE } from '@/app/featureVisibility'
+import { useProjectsStore } from '@/features/projects/projects.store.js'
 
 const { isDebug } = useDebugMode()
 
@@ -174,8 +175,14 @@ function openReviewItem(item) {
 const localLoading = ref(true)
 const isLoading = computed(() => localLoading.value || navigatorStore.loading)
 
-// Service name editing
-const serviceName = ref('My Service Name')
+// Service name editing — 프로젝트에 저장한다(2026-11-24). 전에는 화면 값이라 새로고침하면 'My Service Name' 으로
+// 돌아갔고 템플릿 탭이 따라갈 수 없었다. 저장된 값이 없으면 프로젝트 이름을 보인다.
+const projectsStore = useProjectsStore()
+const serviceName = ref(projectsStore.currentServiceName || '')
+const serviceNameError = ref('')
+watch(() => projectsStore.currentServiceName, (v) => {
+  if (!isEditingName.value) serviceName.value = v || ''
+})
 
 // 041 — 프로젝트 루트 헌장 편집기를 연다(App.vue 가 robo:open-constitution 을 듣고 모달 표시).
 // 2026-10-23 — 버튼만 감춘다. 함수는 남긴다.
@@ -195,11 +202,24 @@ function startEditName() {
   })
 }
 
-function finishEditName() {
+async function finishEditName() {
+  if (!isEditingName.value) return
   isEditingName.value = false
-  if (!serviceName.value.trim()) {
-    serviceName.value = 'My Service Name'
+  const next = serviceName.value.trim()
+  const graph = (projectsStore.current || {}).graph
+  serviceNameError.value = ''
+  if (!graph || next === projectsStore.currentServiceName) {
+    serviceName.value = projectsStore.currentServiceName || ''
+    return
   }
+  // 빈 값이면 저장된 이름을 지운다 → 프로젝트 이름이 보인다
+  const stored = next === (projectsStore.currentName || '') ? '' : next
+  try {
+    await projectsStore.setServiceName(graph, stored)
+  } catch (e) {
+    serviceNameError.value = e.message || '서비스 이름을 저장하지 못했습니다.'
+  }
+  serviceName.value = projectsStore.currentServiceName || ''
 }
 
 function handleNameKeydown(event) {
@@ -207,6 +227,7 @@ function handleNameKeydown(event) {
     finishEditName()
   } else if (event.key === 'Escape') {
     isEditingName.value = false
+    serviceName.value = projectsStore.currentServiceName || ''
   }
 }
 
@@ -298,13 +319,14 @@ function handleProcessDragStart(event, item) {
           class="service-name-input"
           @blur="finishEditName"
           @keydown="handleNameKeydown"
-          placeholder="Service Name"
+          placeholder="서비스 이름 (비우면 프로젝트 이름)"
         />
         <span 
           v-else 
           class="service-name-display"
           @click="startEditName"
-          title="Click to edit service name"
+          :title="serviceNameError || '눌러서 서비스 이름 바꾸기 — 템플릿 · 문서가 이 이름을 쓴다'"
+          :class="{ 'service-name-display--error': serviceNameError }"
         >
           {{ serviceName }}
           <svg class="edit-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -846,6 +868,7 @@ function handleProcessDragStart(event, item) {
 .constitution-root-btn:hover { background: rgba(255, 200, 0, 0.22); }
 .constitution-root-btn__emoji { font-size: 12px; line-height: 1; }
 
+.service-name-display--error { color: var(--color-danger, #e5534b); }
 .service-name-display {
   display: flex;
   align-items: center;

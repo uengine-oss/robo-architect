@@ -35,6 +35,13 @@ export const useProjectsStore = defineStore('projects', () => {
    * 프로젝트의 분석 결과가 사라지고 오류는 안 난다.
    */
   const currentAnalyzerGraph = computed(() => (current.value || {}).analyzerGraph || null)
+  /**
+   * 설계 화면의 서비스 이름(2026-11-24) — 프로젝트에 저장된 값, 없으면 프로젝트 이름.
+   * 템플릿 탭 · 서비스 ID 제안이 이 값을 따른다.
+   */
+  const currentServiceName = computed(
+    () => ((current.value || {}).serviceName || '').trim() || currentName.value || '',
+  )
 
   async function load() {
     loading.value = true
@@ -176,6 +183,19 @@ export const useProjectsStore = defineStore('projects', () => {
     return body
   }
 
+  /** 서비스 이름을 저장한다. 빈 값이면 지운다(→ 프로젝트 이름을 보인다). */
+  async function setServiceName(graph, serviceName) {
+    const r = await fetch(`/api/projects/${encodeURIComponent(graph)}/service-name`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ serviceName: serviceName || '' }),
+    })
+    const body = await r.json().catch(() => ({}))
+    if (!r.ok) throw new Error(body.detail || `서비스 이름을 저장하지 못했습니다 (${r.status})`)
+    await load()
+    return body
+  }
+
   /**
    * 프로젝트를 바꾼다.
    *
@@ -190,7 +210,7 @@ export const useProjectsStore = defineStore('projects', () => {
   }
 
   return {
-    projects, loading, error, current, currentName, canManage, currentAnalyzerGraph,
-    load, create, adopt, members, share, unshare, select, setAnalyzer, remove, analyzerOptions,
+    projects, loading, error, current, currentName, canManage, currentAnalyzerGraph, currentServiceName,
+    load, create, adopt, members, share, unshare, select, setAnalyzer, setServiceName, remove, analyzerOptions,
   }
 })

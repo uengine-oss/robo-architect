@@ -247,6 +247,33 @@ def adopt_graph(graph: str, name: str, owner_uid: str,
     return {"graph": graph, **value, "level": "admin"}
 
 
+SERVICE_NAME_MAX = 80
+
+
+def set_service_name(graph: str, service_name: str) -> dict[str, Any]:
+    """설계 화면의 '서비스 이름' 을 프로젝트에 저장한다 (2026-11-24).
+
+    전에는 화면의 값(`My Service Name`)일 뿐이라 새로고침하면 사라졌고, 템플릿 · 문서가 따라갈 수 없었다.
+    빈 값이면 지운다 — 그러면 화면은 프로젝트 이름을 보인다. 서비스 ID(유일 인덱스)와는 다른 값이다.
+    """
+    project = get_project(graph)
+    if not project:
+        raise ValueError(f"그런 프로젝트가 없다: {graph}")
+    name = " ".join((service_name or "").split())
+    if len(name) > SERVICE_NAME_MAX:
+        raise ValueError(f"서비스 이름은 {SERVICE_NAME_MAX}자까지다")
+    value = {k: v for k, v in project.items() if k not in ("graph", "level")}
+    if name:
+        value["serviceName"] = name
+    else:
+        value.pop("serviceName", None)
+    pg.execute(
+        "UPDATE public.app_projects SET value = %s::jsonb, updated_at = now() WHERE graph = %s",
+        (json.dumps(value, ensure_ascii=False), graph),
+    )
+    return {"graph": graph, **value}
+
+
 def list_projects(uid: str) -> list[dict[str, Any]]:
     """내가 접근할 수 있는 프로젝트만.
 

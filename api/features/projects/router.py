@@ -136,6 +136,21 @@ async def set_analyzer(request: Request, graph: str, body: dict = Body(...)) -> 
     return result
 
 
+@router.put("/{graph}/service-name")
+async def put_service_name(request: Request, graph: str, body: dict = Body(...)) -> dict:
+    """설계 화면의 서비스 이름 — 쓸 수 있는 사람(write · admin)이 바꾼다. 빈 값이면 지운다."""
+    uid = _uid(request)
+    if store.level_of(uid, graph) not in ("write", "admin"):
+        raise HTTPException(status_code=403, detail="이 프로젝트를 고칠 수 없습니다.")
+    result = _guard(store.set_service_name, graph, str((body or {}).get("serviceName") or ""))
+    SmartLogger.log(
+        "INFO", "서비스 이름을 바꿨다.",
+        category="projects.service_name_set",
+        params={**http_context(request), "graph": graph, "by": uid},
+    )
+    return result
+
+
 @router.get("/{graph}/members")
 async def get_members(request: Request, graph: str) -> dict:
     uid = _uid(request)
