@@ -137,19 +137,10 @@ def capture(
 
     # Every relationship touching a snapshot node — neighbours referenced by id
     # so restore can re-link to survivors (or to same-batch re-created nodes).
-    rels = session.run(
-        """
-        MATCH (a)-[r]-(b)
-        WHERE a.id IN $ids AND startNode(r).id IS NOT NULL AND endNode(r).id IS NOT NULL
-        WITH DISTINCT r, startNode(r) AS s, endNode(r) AS e
-        RETURN collect({
-            type: type(r), props: r {.*},
-            startId: s.id, endId: e.id,
-            startLabels: labels(s), endLabels: labels(e)
-        }) AS rels
-        """,
-        ids=ids,
-    ).single()["rels"]
+    # 방향마다 따로 묻는다 — 그래프 저장소(Ontological)에 startNode()/endNode() 가 없어 이 기록이
+    # 늘 실패했다(2026-11-24). api/platform/graph_subgraph.py
+    from api.platform.graph_subgraph import relationships_touching
+    rels = relationships_touching(session, ids)
 
     batch_id = str(uuid.uuid4())
     snapshot = json.dumps({"nodes": nodes, "rels": rels}, ensure_ascii=False, default=str)

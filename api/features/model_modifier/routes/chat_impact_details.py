@@ -179,60 +179,30 @@ async def impact_details(payload: ImpactDetailsRequest, request: Request) -> Dic
         params={**http_context(request), "inputs": {"seedIds": seed_ids, "k": k, "whitelist": whitelist}},
     )
 
-    query = f"""
-    MATCH (s)
-    WHERE s.id IN $seed_ids
-    WITH collect(DISTINCT s) as seeds
-    UNWIND seeds as seed
-    OPTIONAL MATCH p=(seed)-[r:{rel_pattern}*1..{k}]-(n)
-    WITH seeds, collect(p) as ps
-    WITH seeds,
-         CASE
-            WHEN size(ps) = 0 THEN seeds
-            ELSE reduce(allNodes = [], p in ps | allNodes + nodes(p)) + seeds
-         END as node_list,
-         CASE
-            WHEN size(ps) = 0 THEN []
-            ELSE reduce(allRels = [], p in ps | allRels + relationships(p))
-         END as rel_list
+    # 두 단계로 읽는다 — 한 문장의 경로 집계 · startNode() 를 그래프 저장소(Ontological)가 못 해 늘 500 이었다
+    # (2026-11-24). api/platform/graph_subgraph.py
+    from api.platform.graph_subgraph import k_hop_nodes, relationships_among
 
-    UNWIND node_list as nd
-    WITH collect(DISTINCT nd) as nodes, rel_list
-
-    UNWIND (CASE WHEN size(rel_list) = 0 THEN [null] ELSE rel_list END) as rl
-    WITH nodes, collect(DISTINCT rl) as rels
-    WITH nodes, [r IN rels WHERE r IS NOT NULL] as rels
-
-    RETURN
-      [n in nodes | {{
-        id: n.id,
-        type: labels(n)[0],
-        name: coalesce(n.name, ''),
-        description: coalesce(n.description, ''),
-        attachedToId: n.attachedToId,
-        attachedToType: n.attachedToType,
-        attachedToName: n.attachedToName,
-        parentType: n.parentType,
-        parentId: n.parentId,
-        isKey: n.isKey,
-        isForeignKey: n.isForeignKey,
-        isRequired: n.isRequired
-      }}] as nodes,
-      [r in rels | {{
-        source: startNode(r).id,
-        target: endNode(r).id,
-        type: type(r)
-      }}] as relationships
-    """
+    _NODE_FIELDS = ("attachedToId", "attachedToType", "attachedToName", "parentType", "parentId",
+                    "isKey", "isForeignKey", "isRequired")
 
     with get_session() as session:
-        rec = session.run(query, seed_ids=seed_ids).single()
-        if not rec:
-            # Should not happen unless Neo4j is empty or query failed.
+        raw_nodes = k_hop_nodes(session, seed_ids, whitelist, k)
+        if not raw_nodes:
             raise HTTPException(status_code=404, detail="No subgraph found for seedIds")
-
-        nodes = list(rec.get("nodes") or [])
-        rels = _dedupe_relationships(list(rec.get("relationships") or []))
+        nodes = []
+        for n in raw_nodes:
+            labels = n.get("_labels") or []
+            row = {
+                "id": n.get("id"),
+                "type": labels[0] if labels else None,
+                "name": n.get("name") or "",
+                "description": n.get("description") or "",
+            }
+            row.update({f: n.get(f) for f in _NODE_FIELDS})
+            nodes.append(row)
+        rels = _dedupe_relationships(relationships_among(
+            session, [str(n["id"]) for n in nodes if n.get("id")], whitelist))
 
         # Attach BC context (best-effort)
         node_ids = [str(n.get("id")) for n in nodes if n.get("id")]

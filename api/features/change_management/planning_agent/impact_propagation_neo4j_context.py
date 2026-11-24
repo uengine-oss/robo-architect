@@ -54,48 +54,25 @@ def fetch_2hop_subgraph(session, node_id: str, rel_types: List[str]) -> Dict[str
     if not rel_pattern:
         return {"nodes": [], "relationships": []}
 
-    query = f"""
-    MATCH (center {{id: $node_id}})
-    OPTIONAL MATCH p=(center)-[r:{rel_pattern}*1..2]-(n)
-    WITH center, [p in collect(p) WHERE p IS NOT NULL] as ps
-    WITH center,
-         CASE
-            WHEN size(ps) = 0 THEN [center]
-            ELSE reduce(allNodes = [], p in ps | allNodes + nodes(p))
-         END as node_list,
-         CASE
-            WHEN size(ps) = 0 THEN []
-            ELSE reduce(allRels = [], p in ps | allRels + relationships(p))
-         END as rel_list
+    # 두 단계로 읽는다 — 한 문장의 경로 집계 · startNode() 를 그래프 저장소(Ontological)가 못 해 늘 실패했다
+    # (2026-11-24). api/platform/graph_subgraph.py
+    from api.platform.graph_subgraph import k_hop_nodes, relationships_among
 
-    UNWIND node_list as nd
-    WITH collect(DISTINCT nd) as nodes, rel_list
-
-    UNWIND (CASE WHEN size(rel_list) = 0 THEN [null] ELSE rel_list END) as rl
-    WITH nodes, collect(DISTINCT rl) as rels
-    WITH nodes, [r IN rels WHERE r IS NOT NULL] as rels
-
-    RETURN
-      [n in nodes | {{
-        id: n.id,
-        type: labels(n)[0],
-        name: coalesce(n.name, ''),
-        description: coalesce(n.description, ''),
-        properties: n {{.*}}
-      }}] as nodes,
-      [r in rels | {{
-        source: startNode(r).id,
-        target: endNode(r).id,
-        type: type(r),
-        properties: r {{.*}}
-      }}] as relationships
-    """
-
-    record = session.run(query, node_id=node_id).single()
-    if not record:
+    raw_nodes = k_hop_nodes(session, [node_id], rel_types, 2)
+    if not raw_nodes:
         return {"nodes": [], "relationships": []}
-    nodes = record["nodes"] or []
-    relationships = record["relationships"] or []
+    nodes = []
+    for n in raw_nodes:
+        labels = n.pop("_labels", None) or []
+        nodes.append({
+            "id": n.get("id"),
+            "type": labels[0] if labels else None,
+            "name": n.get("name") or "",
+            "description": n.get("description") or "",
+            "properties": n,
+        })
+    relationships = relationships_among(
+        session, [n["id"] for n in nodes if n.get("id")], rel_types, with_properties=True)
 
     node_ids = [n.get("id") for n in nodes if n.get("id")]
     ctx = get_node_contexts(session, node_ids)
