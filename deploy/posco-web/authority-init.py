@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import re
 import sys
 
 import psycopg
@@ -122,7 +123,11 @@ def admin(*args: str) -> None:
 
 def main() -> None:
     dsn = need("OG_PG_DSN")
-    empno = need("ROBO_ADMIN_EMPNO")
+    # 관리자 사번 — 쉼표 · 공백으로 여럿(2026-11-24). 한 명이면 예전과 같다. 다시 돌려도 안전하다(이미 관리자면 그대로).
+    empnos = [e for e in re.split(r"[,\s]+", need("ROBO_ADMIN_EMPNO")) if e]
+    if not empnos:
+        print("authority-init: ROBO_ADMIN_EMPNO 에 사번이 없다", file=sys.stderr)
+        raise SystemExit(2)
     approval = (os.environ.get("ROBO_APPROVAL_REQUIRED") or "true").strip().lower()
     if approval not in ("true", "false"):
         print("authority-init: ROBO_APPROVAL_REQUIRED 는 true|false", file=sys.stderr)
@@ -131,7 +136,8 @@ def main() -> None:
     ensure_roles(dsn)
     admin("migrate")
     grant_authority_role(dsn)
-    admin("grant", "--employee-no", empno, "--reason", "initial administrator (compose)")
+    for empno in empnos:
+        admin("grant", "--employee-no", empno, "--reason", "initial administrator (compose)")
     admin("policy", "--approval-required", approval, "--reason", "posco-web approval policy")
     print("authority-init: 끝")
 
