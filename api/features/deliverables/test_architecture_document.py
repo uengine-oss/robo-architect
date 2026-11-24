@@ -54,6 +54,7 @@ def test_traceability_direct_and_inferred(monkeypatch):
             # pol-1 / rm-1 은 Aggregate 부모가 없으므로 미매핑
         },
     )
+    monkeypatch.setattr(ad, "_fetch_flow_links", lambda: {"emittedBy": {}, "triggeredBy": {}, "invokes": {}})
     m = ad._build_traceability_matrix("sid", [_tree()])
 
     assert [g["us"]["id"] for g in m["groups"]] == ["US-001"]
@@ -69,18 +70,50 @@ def test_traceability_direct_and_inferred(monkeypatch):
     assert m["summary"] == {
         "elements": 6,
         "directElements": 2,
+        "viaElements": 0,
         "inferredElements": 2,
         "unmappedElements": 2,
         "mappedUserStories": 1,
         "userStories": 1,
         "storiesWithoutElements": 0,
         "directRatio": round(2 / 6, 4),
+        "tracedRatio": round(2 / 6, 4),
     }
+
+
+def test_traceability_event_and_policy_follow_the_flow(monkeypatch):
+    """Event 는 일으키는 Command 의, Policy 는 트리거하는 Event(의 Command) 의 스토리를 따른다 (2026-11-24).
+
+    전에는 이벤트가 전부 '추론 매핑'(상위 Aggregate 의 스토리 전부)으로 몰렸다.
+    """
+    us1 = {"id": "US-001", "role": "고객", "action": "주문한다"}
+    us2 = {"id": "US-002", "role": "고객", "action": "조회한다"}
+    monkeypatch.setattr(ad, "_fetch_all_user_stories", lambda sid: [us1, us2])
+    monkeypatch.setattr(ad, "_fetch_direct_links", lambda sid: {
+        "agg-1": [us1, us2],          # Aggregate 는 스토리 둘
+        "cmd-1": [us1],               # Command 는 하나
+    })
+    monkeypatch.setattr(ad, "_fetch_flow_links", lambda: {
+        "emittedBy": {"evt-1": ["cmd-1"]},
+        "triggeredBy": {"pol-1": ["evt-1"]},
+        "invokes": {},
+    })
+    m = ad._build_traceability_matrix("sid", [_tree()])
+
+    rows = {r["id"]: r for g in m["groups"] for r in g["rows"] if g["us"]["id"] == "US-001"}
+    assert rows["evt-1"]["provenance"] == "via" and "주문 생성" in rows["evt-1"]["via"]
+    assert rows["pol-1"]["provenance"] == "via" and rows["pol-1"]["via"].startswith("Event 경유")
+    # 이벤트는 Aggregate 의 스토리 전부(US-002)로 퍼지지 않는다
+    us2_ids = {r["id"] for g in m["groups"] if g["us"]["id"] == "US-002" for r in g["rows"]}
+    assert "evt-1" not in us2_ids
+    assert m["inferred"] == []
+    assert m["summary"]["viaElements"] == 2 and m["summary"]["tracedRatio"] > m["summary"]["directRatio"]
 
 
 def test_traceability_all_unmapped_when_no_links(monkeypatch):
     monkeypatch.setattr(ad, "_fetch_all_user_stories", lambda sid: [])
     monkeypatch.setattr(ad, "_fetch_direct_links", lambda sid: {})
+    monkeypatch.setattr(ad, "_fetch_flow_links", lambda: {"emittedBy": {}, "triggeredBy": {}, "invokes": {}})
     m = ad._build_traceability_matrix("sid", [_tree()])
 
     assert m["groups"] == []

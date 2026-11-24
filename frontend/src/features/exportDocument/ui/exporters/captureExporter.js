@@ -516,17 +516,20 @@ export async function exportToWord(data, container, onProgress) {
     sections.push(sec([
       h2(`${sn.traceabilityMatrix}. 추적성 요약`),
       tbl(
-        ['전체 요소', '직접 매핑', '추론 매핑', '미매핑', 'User Story', '매핑된 US', '요소 없는 US', '직접 매핑률'],
+        ['전체 요소', '직접 매핑', '흐름 경유', '추론 매핑', '미매핑', 'User Story', '매핑된 US', '요소 없는 US', '직접 매핑률', '추적률'],
         // 설계 요소가 없는 US 도 매트릭스에 남는다. 그 수를 숨기면 **요구가
         // 누락된 것과 구별되지 않는다.**
-        [[traceSummary.elements, traceSummary.directElements, traceSummary.inferredElements,
+        [[traceSummary.elements, traceSummary.directElements, traceSummary.viaElements ?? 0, traceSummary.inferredElements,
           traceSummary.unmappedElements,
           traceSummary.userStories ?? traceSummary.mappedUserStories,
           traceSummary.mappedUserStories,
           traceSummary.storiesWithoutElements ?? 0,
-          `${(traceSummary.directRatio * 100).toFixed(1)}%`]],
-        [1150, 1150, 1150, 1050, 1150, 1150, 1150, 1050]
+          `${(traceSummary.directRatio * 100).toFixed(1)}%`,
+          `${((traceSummary.tracedRatio ?? traceSummary.directRatio) * 100).toFixed(1)}%`]],
+        [900, 900, 900, 900, 850, 900, 900, 900, 950, 900]
       ),
+      para('직접 매핑 = 사용자 스토리와 직접 연결된 요소 · 흐름 경유 = 직접 연결은 없지만 흐름으로 이어진 요소(이벤트 ← 그 이벤트를 일으키는 Command, 정책 ← 트리거하는 이벤트) · 추론 매핑 = 그것도 없어 상위 Aggregate 의 스토리를 표시한 요소 · 추적률 = 직접 + 흐름 경유',
+        { size: 18, color: '666666', after: 60 }),
     ]))
 
     // US 별 그룹 — 좁은 3 컬럼. 12 컬럼 매트릭스는 문서 폭에서 잘린다.
@@ -552,7 +555,7 @@ export async function exportToWord(data, container, onProgress) {
         ch.push(tbl(['유형', '이름', 'ID'],
           g.rows.map(r => [
             label(r.type),
-            [r.name || '-', r.technical && r.technical !== r.name ? `(${r.technical})` : '', r.parent ? `↳ ${r.parent}` : ''].filter(Boolean).join(' '),
+            [r.name || '-', r.technical && r.technical !== r.name ? `(${r.technical})` : '', r.parent ? `↳ ${r.parent}` : '', r.provenance === 'via' && r.via ? `⤷ ${r.via}` : ''].filter(Boolean).join(' '),
             r.id || '-',
           ]),
           [1300, 5000, 2700]))
@@ -563,7 +566,7 @@ export async function exportToWord(data, container, onProgress) {
     if (traceInferred.length) {
       sections.push(sec([
         h2(`${sn.traceabilityMatrix}-2. 추론 매핑 (${traceInferred.length})`),
-        para('직접 근거 없이 상위 Aggregate 의 매핑을 상속한 요소입니다.', { size: 20, color: '666666', after: 60 }),
+        para('직접 연결도 흐름 연결도 없어 상위 Aggregate 의 사용자 스토리를 표시한 요소입니다.', { size: 20, color: '666666', after: 60 }),
         tbl(['유형', '이름', '추론된 User Story'],
           traceInferred.map(r => [label(r.type), [r.name || '-', r.parent ? `↳ ${r.parent}` : ''].filter(Boolean).join(' '), r.inferredUs || '-']),
           [1300, 5000, 2700]),

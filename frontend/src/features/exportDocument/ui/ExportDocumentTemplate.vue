@@ -913,16 +913,19 @@ function resolveNodeName(nodeId) {
         <div class="block">
           <h3>{{ sectionNumbers.traceabilityMatrix }}. 추적성 요약</h3>
           <table class="tbl">
-            <thead><tr><th>전체 요소</th><th>직접 매핑</th><th>추론 매핑</th><th>미매핑</th><th>매핑된 User Story</th><th>직접 매핑률</th></tr></thead>
+            <thead><tr><th>전체 요소</th><th>직접 매핑</th><th>흐름 경유</th><th>추론 매핑</th><th>미매핑</th><th>매핑된 User Story</th><th>직접 매핑률</th><th>추적률(직접+경유)</th></tr></thead>
             <tbody><tr>
               <td class="c">{{ traceSummary.elements }}</td>
               <td class="c">{{ traceSummary.directElements }}</td>
+              <td class="c">{{ traceSummary.viaElements ?? 0 }}</td>
               <td class="c">{{ traceSummary.inferredElements }}</td>
               <td class="c">{{ traceSummary.unmappedElements }}</td>
               <td class="c">{{ traceSummary.mappedUserStories }}</td>
               <td class="c">{{ (traceSummary.directRatio * 100).toFixed(1) }}%</td>
+              <td class="c">{{ ((traceSummary.tracedRatio ?? traceSummary.directRatio) * 100).toFixed(1) }}%</td>
             </tr></tbody>
           </table>
+          <p class="toc-dim trace-legend">직접 매핑 = 사용자 스토리와 직접 연결된 요소 · 흐름 경유 = 직접 연결은 없지만 흐름으로 이어진 요소(이벤트 ← 그 이벤트를 일으키는 Command, 정책 ← 트리거하는 이벤트) · 추론 매핑 = 그것도 없어 상위 Aggregate 의 스토리를 표시한 요소</p>
         </div>
 
         <!-- US 별 그룹: 기준 템플릿과 동일하게 좁은 3 컬럼(유형/이름/ID) 표로 나눈다.
@@ -937,6 +940,7 @@ function resolveNodeName(nodeId) {
                 <div class="b">{{ r.name||'-' }}</div>
                 <div v-if="r.technical && r.technical !== r.name" class="prop-type">{{ r.technical }}</div>
                 <div v-if="r.parent" class="toc-dim">↳ {{ r.parent }}</div>
+                <div v-if="r.provenance === 'via'" class="toc-dim">⤷ {{ r.via }}</div>
               </td>
               <td class="prop-type">{{ r.id||'-' }}</td>
             </tr></tbody>
@@ -946,7 +950,7 @@ function resolveNodeName(nodeId) {
         <!-- 추론 매핑: 직접 근거 없이 상위 Aggregate 매핑을 상속한 요소.
              직접 매핑과 섞으면 한 요소가 BC 의 모든 스토리에 붙은 것처럼 보이므로 분리한다. -->
         <div v-if="traceInferred.length" class="block">
-          <h3>추론 매핑 <span class="toc-dim">({{ traceInferred.length }}) — 직접 근거 없이 상위 Aggregate 의 매핑을 상속한 요소</span></h3>
+          <h3>추론 매핑 <span class="toc-dim">({{ traceInferred.length }}) — 직접 연결도 흐름 연결도 없어 상위 Aggregate 의 사용자 스토리를 표시한 요소</span></h3>
           <table class="tbl tbl--sm">
             <thead><tr><th style="width:90px">유형</th><th>이름</th><th style="width:28%">추론된 User Story</th></tr></thead>
             <tbody><tr v-for="(r,i) in traceInferred" :key="'ti-'+i">

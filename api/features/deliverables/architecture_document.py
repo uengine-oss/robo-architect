@@ -234,6 +234,27 @@ def _fetch_direct_links(session_id: str) -> dict[str, list[dict]]:
     return by_element
 
 
+def _fetch_flow_links() -> dict[str, dict[str, list[str]]]:
+    """흐름 연결 — 직접 US 연결이 없는 요소를 흐름으로 잇는 데 쓴다 (2026-11-24).
+
+    ES 생성은 Event 에 US 연결(IMPLEMENTS)을 만들지 않는다. 그래서 전에는 이벤트가 전부 '추론 매핑'
+    (상위 Aggregate 의 스토리 전부)으로 몰렸다 — 이벤트 하나에 스토리 7개씩. 이벤트를 일으키는 Command,
+    정책을 트리거하는 이벤트 · 정책이 호출하는 Command 를 따라가면 정확한 스토리가 나온다.
+    """
+    out: dict[str, dict[str, list[str]]] = {"emittedBy": {}, "triggeredBy": {}, "invokes": {}}
+    queries = {
+        "emittedBy": "MATCH (c:Command)-[:EMITS]->(e:Event) RETURN e.id AS k, c.id AS v",
+        "triggeredBy": "MATCH (e:Event)-[:TRIGGERS]->(p:Policy) RETURN p.id AS k, e.id AS v",
+        "invokes": "MATCH (p:Policy)-[:INVOKES]->(c:Command) RETURN p.id AS k, c.id AS v",
+    }
+    with get_session() as s:
+        for name, q in queries.items():
+            for rec in s.run(q):
+                if rec["k"] and rec["v"]:
+                    out[name].setdefault(rec["k"], []).append(rec["v"])
+    return out
+
+
 def _us_header(us: dict) -> dict:
     """매트릭스 그룹의 머리. **에픽과 태스크를 싣는다.**
 
@@ -370,12 +391,45 @@ def _build_traceability_matrix(session_id: str, trees: list[dict]) -> dict:
     provenance 규칙도 기준 템플릿을 따른다.
 
     - `direct`   — 요소에 US 직접 연결(IMPLEMENTS)이 있다.
-    - `inferred` — 직접 연결은 없지만 상위 Aggregate 의 매핑을 상속했다.
+    - `via`      — 직접 연결은 없지만 흐름으로 이어진다(2026-11-24): Event ← 그 이벤트를 일으키는 Command,
+                   Policy ← 트리거하는 Event(의 Command) 또는 호출하는 Command. 스토리별 표에 "경유" 로 싣는다.
+    - `inferred` — 위 둘 다 없고 상위 Aggregate 의 매핑을 상속했다.
     - 그 외      — 미매핑으로 남긴다. 근거 없는 요소를 BC 의 모든 US 에 붙이는
       식의 대량 거짓 매핑은 만들지 않는다.
     """
     direct = _fetch_direct_links(session_id)
     elements = _collect_elements(trees)
+    try:
+        flow = _fetch_flow_links()
+    except Exception:  # noqa: BLE001 — 흐름을 못 읽으면 예전처럼(직접 · 추론)
+        flow = {"emittedBy": {}, "triggeredBy": {}, "invokes": {}}
+    names = {el["id"]: el["name"] for el in elements}
+
+    def _us_of(ids: list[str]) -> list[dict]:
+        seen: dict[str, dict] = {}
+        for i in ids:
+            for u in direct.get(i) or []:
+                seen.setdefault(u["id"], u)
+        return list(seen.values())
+
+    def _via(el: dict) -> tuple[list[dict], str]:
+        """흐름으로 이어진 스토리와 그 경로 이름."""
+        if el["type"] == _TRACE_TYPE_BY_LABEL["Event"]:
+            cmds = flow["emittedBy"].get(el["id"]) or []
+            us = _us_of(cmds)
+            if us:
+                return us, "Command 경유: " + ", ".join(names.get(c, c) for c in cmds if direct.get(c))
+        if el["type"] == _TRACE_TYPE_BY_LABEL["Policy"]:
+            evts = flow["triggeredBy"].get(el["id"]) or []
+            cmds = [c for e in evts for c in (flow["emittedBy"].get(e) or [])]
+            us = _us_of(cmds)
+            if us:
+                return us, "Event 경유: " + ", ".join(names.get(e, e) for e in evts)
+            inv = flow["invokes"].get(el["id"]) or []
+            us = _us_of(inv)
+            if us:
+                return us, "호출 Command 경유: " + ", ".join(names.get(c, c) for c in inv if direct.get(c))
+        return [], ""
 
     # Aggregate 별 US 매핑 캐시 — 하위 요소의 추론 상속에 쓴다.
     agg_us_cache = {el["id"]: direct.get(el["id"], []) for el in elements if el["type"] == "aggregate"}
@@ -383,11 +437,17 @@ def _build_traceability_matrix(session_id: str, trees: list[dict]) -> dict:
     groups: dict[str, dict] = {}
     unmapped: list[dict] = []
     inferred: list[dict] = []
-    stats = {"direct": 0, "inferred": 0, "unmapped": 0}
+    stats = {"direct": 0, "via": 0, "inferred": 0, "unmapped": 0}
 
     for el in elements:
         us_list = direct.get(el["id"]) or []
         provenance = "direct"
+        via_path = ""
+
+        if not us_list:
+            us_list, via_path = _via(el)
+            if us_list:
+                provenance = "via"
 
         if not us_list:
             parent_id = el.get("parentAggregateId")
@@ -420,7 +480,7 @@ def _build_traceability_matrix(session_id: str, trees: list[dict]) -> dict:
             )
             continue
 
-        stats["direct"] += 1
+        stats[provenance] += 1
         for us in us_list:
             key = us["id"]
             group = groups.setdefault(key, {"us": _us_header(us), "rows": []})
@@ -432,6 +492,7 @@ def _build_traceability_matrix(session_id: str, trees: list[dict]) -> dict:
                     "parent": el["parent"],
                     "id": el["id"],
                     "provenance": provenance,
+                    "via": via_path,
                 }
             )
 
@@ -451,7 +512,7 @@ def _build_traceability_matrix(session_id: str, trees: list[dict]) -> dict:
         g["us"]["id"] for g in groups.values() if not g["rows"]
     )
 
-    total = stats["direct"] + stats["inferred"] + stats["unmapped"]
+    total = stats["direct"] + stats["via"] + stats["inferred"] + stats["unmapped"]
     return {
         "groups": sorted(groups.values(), key=lambda g: g["us"]["id"]),
         "inferred": inferred,
@@ -461,12 +522,16 @@ def _build_traceability_matrix(session_id: str, trees: list[dict]) -> dict:
         "summary": {
             "elements": total,
             "directElements": stats["direct"],
+            #: 흐름으로 이어진 요소(Command 경유 등) — 직접 매핑과 따로 센다
+            "viaElements": stats["via"],
             "inferredElements": stats["inferred"],
             "unmappedElements": stats["unmapped"],
             "mappedUserStories": sum(1 for g in groups.values() if g["rows"]),
             "userStories": len(groups),
             "storiesWithoutElements": len(stories_without_elements),
             "directRatio": round(stats["direct"] / total, 4) if total else 0.0,
+            #: 직접 + 경유 — 스토리까지 근거로 따라갈 수 있는 요소 비율
+            "tracedRatio": round((stats["direct"] + stats["via"]) / total, 4) if total else 0.0,
         },
     }
 
