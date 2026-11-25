@@ -19,10 +19,10 @@ AP 서버  나머지 전부
          graph-bolt · graph-db · authority 를 가리키는 주소를 DB 서버 IP 로 바꾸고,
          DB 쪽 서비스를 기다리던 depends_on 을 뺀다(다른 서버라 compose 가 못 기다린다)
 """
-from __future__ import annotations
 
 import re
 import sys
+from typing import Dict, List, Tuple  # 3.6(RHEL 8 기본 python3)에서도 돈다 — list[str] · __future__ annotations 를 쓰지 않는다
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -60,11 +60,11 @@ HEADER = """# ==================================================================
 """
 
 
-def split_blocks(text: str) -> tuple[str, dict[str, str], str]:
+def split_blocks(text: str) -> Tuple[str, Dict[str, str], str]:
     """(services 앞, {서비스: 블록}, volumes 부터) 로 가른다."""
     head, rest = text.split("\nservices:\n", 1)
     body, tail = rest.split("\nvolumes:\n", 1)
-    blocks: dict[str, str] = {}
+    blocks = {}  # type: Dict[str, str]
     name = None
     for line in body.splitlines(keepends=True):
         match = re.match(r"^  ([a-z0-9-]+):\s*$", line)
@@ -111,17 +111,17 @@ def add_ports(name: str, block: str) -> str:
 
 def drop_db_dependencies(block: str) -> str:
     lines = block.splitlines(keepends=True)
-    out: list[str] = []
+    out = []  # type: List[str]
     i = 0
     while i < len(lines):
         line = lines[i]
         if line.rstrip() == "    depends_on:":
-            deps: list[str] = []
+            deps = []  # type: List[str]
             i += 1
             while i < len(lines) and lines[i].startswith("      "):
                 deps.append(lines[i])
                 i += 1
-            kept: list[str] = []
+            kept = []  # type: List[str]
             j = 0
             while j < len(deps):
                 m = re.match(r"^      ([a-z0-9-]+):", deps[j])
@@ -141,7 +141,7 @@ def drop_db_dependencies(block: str) -> str:
     return "".join(out)
 
 
-def build() -> dict[Path, str]:
+def build() -> Dict[Path, str]:
     head, blocks, volumes = split_blocks(SOURCE.read_text(encoding="utf-8"))
     missing = [s for s in DB_SERVICES if s not in blocks]
     assert not missing, f"통합 파일에 없는 DB 서비스: {missing}"
@@ -181,7 +181,8 @@ def main() -> int:
             if current != text:
                 stale.append(path.name)
         else:
-            path.write_text(text, encoding="utf-8", newline="\n")
+            with open(str(path), "w", encoding="utf-8", newline="\n") as f:  # write_text(newline=) 는 3.10~
+                f.write(text)
             print(f"wrote {path.name}")
     if stale:
         print("분할 파일이 통합 파일과 어긋났다 — python make-split.py 를 돌린다: " + ", ".join(stale))
