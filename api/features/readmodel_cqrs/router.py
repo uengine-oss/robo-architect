@@ -51,10 +51,12 @@ async def get_cqrs_property_references(property_id: str, request: Request) -> di
     )
 
     # Use UNION to keep role/kind explicit and avoid post-processing ambiguity.
+    # 각 갈래의 첫 줄은 MATCH 하나다. 종전 `OPTIONAL MATCH (rm)-…->(evt)` 뒤의
+    # `MATCH (op)-…` 는 op 가 없으면 어차피 행을 버렸으니 결과는 같고,
+    # AGE 는 OPTIONAL MATCH 뒤의 MATCH 를 받지 않는다(2026-11-26).
     query = """
     // ---- Mapping: TARGET role ----
-    MATCH (rm:ReadModel)
-    OPTIONAL MATCH (rm)-[:HAS_CQRS]->(cqrs:CQRSConfig)-[:HAS_OPERATION]->(op:CQRSOperation)-[:TRIGGERED_BY]->(evt:Event)
+    MATCH (rm:ReadModel)-[:HAS_CQRS]->(cqrs:CQRSConfig)-[:HAS_OPERATION]->(op:CQRSOperation)-[:TRIGGERED_BY]->(evt:Event)
     MATCH (op)-[:HAS_MAPPING]->(m:CQRSMapping)-[:TARGET]->(p:Property {id: $property_id})
     OPTIONAL MATCH (m)-[:SOURCE]->(src:Property)
     RETURN {
@@ -77,8 +79,7 @@ async def get_cqrs_property_references(property_id: str, request: Request) -> di
     } as ref
     UNION
     // ---- Mapping: SOURCE role ----
-    MATCH (rm:ReadModel)
-    OPTIONAL MATCH (rm)-[:HAS_CQRS]->(cqrs:CQRSConfig)-[:HAS_OPERATION]->(op:CQRSOperation)-[:TRIGGERED_BY]->(evt:Event)
+    MATCH (rm:ReadModel)-[:HAS_CQRS]->(cqrs:CQRSConfig)-[:HAS_OPERATION]->(op:CQRSOperation)-[:TRIGGERED_BY]->(evt:Event)
     MATCH (op)-[:HAS_MAPPING]->(m:CQRSMapping)-[:SOURCE]->(p:Property {id: $property_id})
     OPTIONAL MATCH (m)-[:TARGET]->(tgt:Property)
     RETURN {
@@ -101,8 +102,7 @@ async def get_cqrs_property_references(property_id: str, request: Request) -> di
     } as ref
     UNION
     // ---- Where: TARGET role ----
-    MATCH (rm:ReadModel)
-    OPTIONAL MATCH (rm)-[:HAS_CQRS]->(cqrs:CQRSConfig)-[:HAS_OPERATION]->(op:CQRSOperation)-[:TRIGGERED_BY]->(evt:Event)
+    MATCH (rm:ReadModel)-[:HAS_CQRS]->(cqrs:CQRSConfig)-[:HAS_OPERATION]->(op:CQRSOperation)-[:TRIGGERED_BY]->(evt:Event)
     MATCH (op)-[:HAS_WHERE]->(w:CQRSWhere)-[:TARGET]->(p:Property {id: $property_id})
     OPTIONAL MATCH (w)-[:SOURCE_EVENT_FIELD]->(src:Property)
     RETURN {
@@ -125,8 +125,7 @@ async def get_cqrs_property_references(property_id: str, request: Request) -> di
     } as ref
     UNION
     // ---- Where: SOURCE_EVENT_FIELD role ----
-    MATCH (rm:ReadModel)
-    OPTIONAL MATCH (rm)-[:HAS_CQRS]->(cqrs:CQRSConfig)-[:HAS_OPERATION]->(op:CQRSOperation)-[:TRIGGERED_BY]->(evt:Event)
+    MATCH (rm:ReadModel)-[:HAS_CQRS]->(cqrs:CQRSConfig)-[:HAS_OPERATION]->(op:CQRSOperation)-[:TRIGGERED_BY]->(evt:Event)
     MATCH (op)-[:HAS_WHERE]->(w:CQRSWhere)-[:SOURCE_EVENT_FIELD]->(p:Property {id: $property_id})
     OPTIONAL MATCH (w)-[:TARGET]->(tgt:Property)
     RETURN {
