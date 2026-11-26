@@ -57,7 +57,7 @@ import time
 from typing import Optional
 
 from api.features.auth.tokens import TokenError, verify_token
-from api.features.projects import roles, store as projects
+from api.features.projects import engine, roles, store as projects
 from api.platform import pg
 from api.platform.neo4j_context import Neo4jOverride
 from api.platform.observability.smart_logger import SmartLogger
@@ -134,11 +134,7 @@ def _level(role: str, graph: str) -> Optional[str]:
     now = time.monotonic()
     if hit and hit[0] > now:
         return hit[1]
-    rows = pg.query(
-        "SELECT level FROM og_catalog.grantee WHERE role = %s AND graph = %s",
-        (role, graph),
-    )
-    level = rows[0]["level"] if rows else None
+    level = engine.level(role, graph)
     _CACHE[key] = (now + _cache_ttl(), level)
     return level
 

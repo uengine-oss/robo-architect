@@ -1,0 +1,111 @@
+# AGE 판 — 그래프 저장소를 Ontological 에서 Apache AGE 로 (2026-11-26 · 다음 릴리스).
+#
+#   sudo docker compose -f docker-compose.yml -f docker-compose.age.yml up -d
+#
+# 바뀌는 것은 그래프 저장소 두 장과 그것을 가리키는 값뿐이다. 앱 · 화면 · 나머지 아홉 장은 같다.
+#
+#   graph-db    uengine/supabase-postgres-age (Supabase Postgres 15.8 + AGE 1.8.0 — Apache 공식 소스 그대로)
+#               Supabase 기능(Auth · PostgREST …)은 쓰지 않는다. 그래프는 DB `graph` 안의 스키마 하나씩.
+#   graph-bolt  uengine/ontological-bolt:age — Neo4j 드라이버의 Cypher 를 AGE cypher() 로.
+#               로그인한 자격을 그대로 PostgreSQL role 로 쓴다(사용자별 read 격리가 DB 에서 선다).
+#   graph-init  한 번 돌고 끝 — 앱 role(ROBO_GRAPH_USER) · 고정 graph 둘(설계 · 분석) · 카탈로그 읽기 권한
+#
+# 앱 쪽: ROBO_GRAPH_ENGINE=age → 프로젝트 권한 행은 public.app_project_members(api/features/projects/engine.py)
+#
+# 근거: electron-test/2026-11-26/참고-AGE-설치-안내.md · ontological-db age/main age-supabase/
+x-age-pg: &age-pg
+  OG_PG_HOST: graph-db
+  OG_PG_PORT: "5432"
+  OG_PG_DATABASE: graph
+
+services:
+  graph-db:
+    image: ${ROBO_AGE_DB_IMAGE:-uengine/supabase-postgres-age:15.8.1.060-age1.8.0}
+    environment:
+      # Supabase 이미지는 POSTGRES_PASSWORD 를 supabase_admin · postgres 의 비밀번호로 쓴다(관리자 — graph-init 만 쓴다).
+      POSTGRES_PASSWORD: ${ROBO_GRAPH_ADMIN_PASSWORD:?}
+      POSTGRES_HOST: /var/run/postgresql
+      # 통합 파일의 값(robo · 설계 graph 이름)을 Supabase 이미지 기본값으로 덮는다 — 그 이미지는 postgres DB 와
+      # supabase_admin 을 전제로 초기화한다. 앱 role 은 graph-init 이 따로 만든다. (`!reset` 은 compose 2.24~ 라 쓰지 않는다)
+      POSTGRES_USER: postgres
+      POSTGRES_DB: postgres
+    healthcheck:
+      # 떴고 · DB `graph` 에 AGE 가 있다(새 볼륨이면 이미지 초기화가 만든다)
+      test: ["CMD-SHELL", "pg_isready -U postgres -h 127.0.0.1 -q && psql -U supabase_admin -h 127.0.0.1 -d graph -Atc \"SELECT 1 FROM pg_extension WHERE extname='age'\" | grep -q 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 30s
+
+  graph-init:
+    image: ${ROBO_AGE_DB_IMAGE:-uengine/supabase-postgres-age:15.8.1.060-age1.8.0}
+    restart: "no"
+    labels:
+      org.uengine.robo.topology: posco-web
+    entrypoint: ["bash", "-c"]
+    command:
+      - |
+        set -euo pipefail
+        export PGPASSWORD="$$ADMIN_PASSWORD"
+        P="psql -X -q -v ON_ERROR_STOP=1 -h graph-db -U supabase_admin -d graph"
+        echo "graph-init: 앱 role $$APP_ROLE"
+        $$P -v app="$$APP_ROLE" -v pw="$$APP_PASSWORD" <<'SQL'
+        SELECT format('CREATE ROLE %I LOGIN', :'app') WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'app') \gexec
+        -- 사용자마다 role 을 만든다(read 격리) → CREATEROLE. 슈퍼유저는 아니다.
+        SELECT format('ALTER ROLE %I WITH LOGIN NOSUPERUSER CREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS PASSWORD %L', :'app', :'pw') \gexec
+        SELECT format('GRANT CONNECT, CREATE ON DATABASE graph TO %I', :'app') \gexec
+        SELECT format('GRANT USAGE, CREATE ON SCHEMA public TO %I', :'app') \gexec
+        -- 게이트웨이가 graph · 라벨 이름을 찾는다 — 사용자 role(p_<사번>) 도. 이름만이고 데이터는 아니다.
+        GRANT USAGE ON SCHEMA ag_catalog TO PUBLIC;
+        GRANT SELECT ON ag_catalog.ag_graph, ag_catalog.ag_label TO PUBLIC;
+        SQL
+        for g in "$$GRAPH_DESIGN" "$$GRAPH_ANALYSIS"; do
+          # 앱 role 로 만든다 — AGE 는 graph 소유자만 라벨을 더한다(게이트웨이 README)
+          PGPASSWORD="$$APP_PASSWORD" psql -X -q -v ON_ERROR_STOP=1 -h graph-db -U "$$APP_ROLE" -d graph -v g="$$g" <<'SQL'
+        LOAD 'age';
+        SET search_path = ag_catalog, "$$user", public;
+        SELECT format('SELECT ag_catalog.create_graph(%L)', :'g') WHERE NOT EXISTS (SELECT 1 FROM ag_catalog.ag_graph WHERE name = :'g') \gexec
+        SQL
+          echo "graph-init: graph $$g"
+        done
+        echo "graph-init: 끝"
+    environment:
+      ADMIN_PASSWORD: ${ROBO_GRAPH_ADMIN_PASSWORD:?}
+      APP_ROLE: ${ROBO_GRAPH_USER:?}
+      APP_PASSWORD: ${ROBO_GRAPH_PASSWORD:?}
+      GRAPH_DESIGN: ${ROBO_GRAPH_DESIGN:?}
+      GRAPH_ANALYSIS: ${ROBO_GRAPH_ANALYSIS:?}
+    depends_on:
+      graph-db:
+        condition: service_healthy
+
+  graph-bolt:
+    image: ${ROBO_AGE_BOLT_IMAGE:-uengine/ontological-bolt:age}
+    init: true
+    environment:
+      OG_BOLT_BACKEND: age
+      OG_BOLT_PGDATABASE: graph
+    depends_on:
+      graph-init:
+        condition: service_completed_successfully
+
+  authority-init:
+    environment:
+      <<: *age-pg
+      ROBO_GRAPH_ENGINE: age
+      # 역할 · 표 권한을 주는 한 번 — 관리자 자격(Supabase 이미지의 supabase_admin)
+      OG_PG_DSN: postgresql://supabase_admin:${ROBO_GRAPH_ADMIN_PASSWORD:?}@graph-db:5432/graph
+    depends_on:
+      graph-init:
+        condition: service_completed_successfully
+
+  authority:
+    environment:
+      <<: *age-pg
+      ROBO_GRAPH_ENGINE: age
+      OG_PG_DSN: postgresql://robo_authority:${ROBO_AUTHORITY_DB_PASSWORD:?}@graph-db:5432/graph
+
+  architect-api:
+    environment:
+      <<: *age-pg
+      ROBO_GRAPH_ENGINE: age

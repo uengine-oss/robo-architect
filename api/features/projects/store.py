@@ -26,7 +26,7 @@ import secrets
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from api.features.projects import roles
+from api.features.projects import engine, roles
 from api.platform import pg
 from api.platform.observability.smart_logger import SmartLogger
 
@@ -78,6 +78,7 @@ def ensure_schema() -> None:
     with pg.connection() as conn:
         with conn.cursor() as cur:
             cur.execute(_SCHEMA)
+            engine.ensure_schema(cur)   # AGE: 권한 행 표(app_project_members)
 
 
 def _now() -> str:
@@ -98,8 +99,7 @@ def _new_graph_name() -> str:
 
 
 def graph_exists(graph: str) -> bool:
-    rows = pg.query("SELECT 1 FROM og_catalog.graph WHERE name = %s", (graph,))
-    return bool(rows)
+    return engine.graph_exists(graph)
 
 
 # ── 프로젝트 ──────────────────────────────────────────────────────────
@@ -144,13 +144,13 @@ def create_project(name: str, owner_uid: str, *, with_analyzer: bool = True) -> 
         value["analyzerGraph"] = analyzer_graph
     with pg.connection() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT og_create_graph(%s)", (graph,))
-            cur.execute("SELECT og_grant(%s, %s, %s)", (role, "admin", graph))
+            engine.create_graph(cur, graph)
+            engine.grant(cur, role, "admin", graph)
             if analyzer_graph:
                 # 분석 graph 에도 같은 권한을 준다 — 추적성이 두 graph 를 오가며
                 # 읽으므로, 한쪽만 열어 두면 설계는 보이는데 출처만 막힌다.
-                cur.execute("SELECT og_create_graph(%s)", (analyzer_graph,))
-                cur.execute("SELECT og_grant(%s, %s, %s)", (role, "admin", analyzer_graph))
+                engine.create_graph(cur, analyzer_graph)
+                engine.grant(cur, role, "admin", analyzer_graph)
             cur.execute(
                 "INSERT INTO public.app_projects (graph, value) VALUES (%s, %s::jsonb)",
                 (graph, json.dumps(value, ensure_ascii=False)),
@@ -238,7 +238,7 @@ def adopt_graph(graph: str, name: str, owner_uid: str,
         value["analyzerGraph"] = analyzer_graph
     with pg.connection() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT og_grant(%s, %s, %s)", (role, "admin", graph))
+            engine.grant(cur, role, "admin", graph)
             cur.execute(
                 "INSERT INTO public.app_projects (graph, value) VALUES (%s, %s::jsonb) "
                 "ON CONFLICT (graph) DO UPDATE SET value = EXCLUDED.value, updated_at = now()",
@@ -277,14 +277,14 @@ def set_service_name(graph: str, service_name: str) -> dict[str, Any]:
 def list_projects(uid: str) -> list[dict[str, Any]]:
     """내가 접근할 수 있는 프로젝트만.
 
-    `og_catalog.grantee` 와 조인한다 — 권한의 원천이 거기이므로, 별도 멤버십
-    표를 두고 두 곳이 어긋나는 상황을 만들지 않는다.
+    권한 행(엔진별 — Ontological `og_catalog.grantee` · AGE `app_project_members`)과 조인한다 —
+    권한의 원천이 거기이므로, 별도 멤버십 표를 두고 두 곳이 어긋나는 상황을 만들지 않는다.
     """
     role = roles.role_name(uid)
     rows = pg.query(
         "SELECT p.graph, p.value, g.level "
         "FROM public.app_projects p "
-        "JOIN og_catalog.grantee g ON g.graph = p.graph "
+        f"JOIN {engine.GRANTEE} g ON g.graph = p.graph "
         "WHERE g.role = %s "
         "ORDER BY p.created_at DESC",
         (role,),
@@ -334,9 +334,8 @@ def analyzer_options(uid: str, graph: str) -> list[dict[str, Any]]:
     "여기에 새로 분석한다"는 뜻이다. 화면이 그 둘을 다르게 말할 수 있어야 한다.
     """
     role = roles.role_name(uid)
-    mine = {r["graph"] for r in pg.query(
-        "SELECT graph FROM og_catalog.grantee WHERE role = %s", (role,))}
-    names = {r["name"] for r in pg.query("SELECT name FROM og_catalog.graph")}
+    mine = engine.graphs_of_role(role)
+    names = engine.graph_names()
     project = get_project(graph) or {}
     current = project.get("analyzerGraph")
 
@@ -355,7 +354,7 @@ def analyzer_options(uid: str, graph: str) -> list[dict[str, Any]]:
     # 내 다른 프로젝트의 분석. 사람이 지은 이름으로 보여 준다.
     for row in pg.query(
         "SELECT p.graph, p.value FROM public.app_projects p "
-        "JOIN og_catalog.grantee g ON g.graph = p.graph WHERE g.role = %s", (role,)
+        f"JOIN {engine.GRANTEE} g ON g.graph = p.graph WHERE g.role = %s", (role,)
     ):
         if row["graph"] == graph:
             continue
@@ -380,11 +379,7 @@ def get_project(graph: str) -> Optional[dict[str, Any]]:
 
 def level_of(uid: str, graph: str) -> Optional[str]:
     """이 사용자가 이 프로젝트에 가진 등급. 없으면 None."""
-    rows = pg.query(
-        "SELECT level FROM og_catalog.grantee WHERE role = %s AND graph = %s",
-        (roles.role_name(uid), graph),
-    )
-    return rows[0]["level"] if rows else None
+    return engine.level(roles.role_name(uid), graph)
 
 
 def _invalidate_binding(role: str, graph: str) -> None:
@@ -450,8 +445,11 @@ def share(graph: str, uid: str, level: str) -> dict[str, Any]:
     if project.get("ownerUid") == uid:
         raise ValueError("소유자는 이미 관리 권한을 갖고 있습니다. 초대할 수 없습니다.")
     role = roles.ensure_role(uid)
+    with pg.connection() as conn:
+        with conn.cursor() as cur:
+            for g in _paired_graphs(project):
+                engine.grant(cur, role, level, g)
     for g in _paired_graphs(project):
-        pg.query("SELECT og_grant(%s, %s, %s)", (role, level, g))
         _invalidate_binding(role, g)
     return {"graph": graph, "uid": uid, "role": role, "level": level}
 
@@ -464,8 +462,11 @@ def unshare(graph: str, uid: str) -> dict[str, Any]:
     if project.get("ownerUid") == uid:
         raise ValueError("소유자의 권한은 회수할 수 없다")
     role = roles.role_name(uid)
+    with pg.connection() as conn:
+        with conn.cursor() as cur:
+            for g in _paired_graphs(project):
+                engine.revoke(cur, role, g)
     for g in _paired_graphs(project):
-        pg.query("SELECT og_revoke(%s, %s)", (role, g))
         _invalidate_binding(role, g)
     return {"graph": graph, "uid": uid, "role": role}
 
@@ -477,10 +478,7 @@ def members(graph: str) -> list[dict[str, Any]]:
     사라진다). 그래서 사용자 표에서 role 이름을 다시 만들어 맞춘다. 참여자가
     적어 비용이 문제되지 않고, 역변환 규칙을 따로 유지하지 않아도 된다.
     """
-    grants = pg.query(
-        "SELECT role, level FROM og_catalog.grantee WHERE graph = %s ORDER BY role",
-        (graph,),
-    )
+    grants = engine.grants_of_graph(None, graph)
     users = pg.query("SELECT uid, value FROM public.app_users")
     by_role = {roles.role_name(u["uid"]): u for u in users if u.get("uid")}
     out = []
@@ -525,13 +523,12 @@ def drop_project(graph: str) -> None:
     with pg.connection() as conn:
         with conn.cursor() as cur:
             for g in targets:
-                cur.execute("SELECT role FROM og_catalog.grantee WHERE graph = %s", (g,))
-                for row in cur.fetchall():
-                    cur.execute("SELECT og_revoke(%s, %s)", (row["role"], g))
+                for row in engine.grants_of_graph(cur, g):
+                    engine.revoke(cur, row["role"], g)
                     touched.append((row["role"], g))
             cur.execute("DELETE FROM public.app_projects WHERE graph = %s", (graph,))
             for g in targets:
-                cur.execute("SELECT og_drop_graph(%s)", (g,))
+                engine.drop_graph(cur, g)
     for role, g in touched:
         _invalidate_binding(role, g)
 
@@ -543,18 +540,14 @@ def prune_orphan_grants() -> list[dict[str, str]]:
     들어온다. 조회로는 드러나지 않는다 — 목록은 `app_projects` 와 조인하므로
     화면에 보이지 않는다.
     """
-    rows = pg.query(
-        "SELECT role, graph FROM og_catalog.grantee g "
-        "WHERE NOT EXISTS (SELECT 1 FROM og_catalog.graph x WHERE x.name = g.graph)"
-    )
+    rows = engine.orphan_grants()
     for r in rows:
         try:
-            pg.query("SELECT og_revoke(%s, %s)", (r["role"], r["graph"]))
+            with pg.connection() as conn:
+                with conn.cursor() as cur:
+                    engine.revoke(cur, r["role"], r["graph"])
         except Exception:
-            # 권한 객체가 이미 사라진 경우 og_revoke 가 죽을 수 있다. 표에서만 지운다.
-            pg.execute(
-                "DELETE FROM og_catalog.grantee WHERE role = %s AND graph = %s",
-                (r["role"], r["graph"]),
-            )
+            # 권한 객체가 이미 사라진 경우 revoke 가 죽을 수 있다. 표에서만 지운다.
+            engine.forget_grant(r["role"], r["graph"])
         _invalidate_binding(r["role"], r["graph"])
     return [dict(r) for r in rows]
