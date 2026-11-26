@@ -100,6 +100,8 @@ services:
       #   central  여럿이 한 저장소를 쓴다. 이미 있는 사용자 role 의 비밀번호를
       #            덮지 않는다(projects/roles.py). 통합 서버도 여럿이 쓰므로 central 이다.
       ROBO_GRAPH_MODE: central
+      # 그래프 엔진 — AGE 판(2026-11-26~). 프로젝트 권한 행은 public.app_project_members(api/features/projects/engine.py)
+      ROBO_GRAPH_ENGINE: age
       ROBO_PACKAGED_RUNTIME: "1"
       # 요청마다 로그인한 사람의 role 로 그래프에 붙는다. 설치본 `.env` 는 false 였지만
       # Electron 이 프로세스 환경으로 true 를 넣어 **실효값은 true** 였다(backend.ts).
@@ -123,7 +125,7 @@ services:
       ANALYZER_NEO4J_DATABASE: ${ROBO_GRAPH_ANALYSIS:?}
       OG_PG_HOST: graph-db
       OG_PG_PORT: "5432"
-      OG_PG_DATABASE: ${ROBO_GRAPH_DESIGN:?}
+      OG_PG_DATABASE: graph   # AGE 는 DB 하나(graph) 안에 graph 마다 스키마 하나
       OG_PG_USER: ${ROBO_GRAPH_USER:?}
       OG_PG_PASSWORD: ${ROBO_GRAPH_PASSWORD:?}
       # 안쪽 서비스 — 설치본은 127.0.0.1:<동적포트> 였다(docker-stack.ts).
@@ -229,11 +231,12 @@ services:
       AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:?}
       AUTH_ROLE_SECRET: ${AUTH_ROLE_SECRET:?}
       # 제한된 역할로만 붙는다. superuser 는 authority-init 에서만 한 번 쓴다.
-      OG_PG_DSN: postgresql://robo_authority:${ROBO_AUTHORITY_DB_PASSWORD:?}@graph-db:5432/${ROBO_GRAPH_DESIGN:?}
+      OG_PG_DSN: postgresql://robo_authority:${ROBO_AUTHORITY_DB_PASSWORD:?}@graph-db:5432/graph
+      ROBO_GRAPH_ENGINE: age
       # 프로젝트 생성·공유(역할 생성 · graph 생성 · grant)는 **소유자 자격**으로 한다 — README §④.
       #   이 배치에서는 architect-api 가 이미 소유자 자격을 들고 있어(설치본 central 의 PC 와 같다)
       #   운영 역할을 따로 두어도 격리가 늘지 않는다. 런타임 역할(위)만 제한 역할이다.
-      ROBO_PROJECT_OPERATOR_DSN: postgresql://${ROBO_GRAPH_USER:?}:${ROBO_GRAPH_PASSWORD:?}@graph-db:5432/${ROBO_GRAPH_DESIGN:?}
+      ROBO_PROJECT_OPERATOR_DSN: postgresql://${ROBO_GRAPH_USER:?}:${ROBO_GRAPH_PASSWORD:?}@graph-db:5432/graph
       # 비면 loopback 만 허용 → 서버 주소의 콜백이 거부된다. 반드시 채운다.
       AUTH_CALLBACK_ALLOWLIST: ${ROBO_PUBLIC_URL:?브라우저가 여는 주소(예 http://10.0.0.5:8080)}
       # 비우면 코드 기본값(SWP 가동계 주소)을 쓴다 — env_str 은 빈 값을 기본값으로 읽는다.
@@ -260,7 +263,10 @@ services:
     labels: *labels
     environment:
       <<: *authority-env
-      OG_PG_DSN: postgresql://${ROBO_GRAPH_USER:?}:${ROBO_GRAPH_PASSWORD:?}@graph-db:5432/${ROBO_GRAPH_DESIGN:?}
+      # accounts_admin 은 슈퍼유저를 요구한다 → 관리자(supabase_admin)로 돌고, 만든 app_* 표 · 시퀀스는
+      # **앱 role 에게 소유권을 넘긴다**(ROBO_APP_DB_ROLE) — 앱 role 이 소유자여야 앱이 쓴다.
+      OG_PG_DSN: postgresql://supabase_admin:${ROBO_GRAPH_ADMIN_PASSWORD:?}@graph-db:5432/graph
+      ROBO_APP_DB_ROLE: ${ROBO_GRAPH_USER:?}
       ROBO_AUTHORITY_DB_PASSWORD: ${ROBO_AUTHORITY_DB_PASSWORD:?}
       ROBO_ADMIN_EMPNO: ${ROBO_ADMIN_EMPNO:?최초 관리자 사번}
       ROBO_APPROVAL_REQUIRED: ${ROBO_APPROVAL_REQUIRED:-true}
@@ -268,48 +274,101 @@ services:
       - ./authority-init.py:/app/authority_init.py:ro,z
     command: ["python", "/app/authority_init.py"]
     depends_on:
-      graph-db:
-        condition: service_healthy
+      graph-init:
+        condition: service_completed_successfully
 
-  # ── 그래프 저장소 — Ontological(PostgreSQL) + Bolt 게이트웨이 ─────────
+  # ── 그래프 저장소 — Apache AGE(PostgreSQL) + Bolt 게이트웨이 (2026-11-26~) ──
+  # 근거: electron-test/2026-11-26/참고-AGE-설치-안내.md · ontological-db age/main age-supabase/
+  #   graph-db    Supabase Postgres 15.8 + AGE 1.8.0. Supabase 기능(Auth · PostgREST …)은 쓰지 않는다.
+  #               그래프는 DB `graph` 안의 스키마 하나씩(설계 · 분석 · 프로젝트마다).
+  #   graph-init  한 번 돌고 끝 — 앱 role(ROBO_GRAPH_USER) · 고정 graph 둘 · 카탈로그 읽기 권한
+  #   graph-bolt  Neo4j 드라이버의 Cypher 를 AGE cypher() 로. 로그인한 자격을 그대로 PostgreSQL role 로 쓴다
+  #               (사용자별 read 격리가 DB 에서 선다). **Bolt 는 평문 인증** — 분할 판에서는 AP 쪽에 둔다.
   graph-db:
-    image: ghcr.io/uengine-oss/robo-posco-graph-db:delivery
+    image: ghcr.io/uengine-oss/robo-posco-graph-age:delivery
     restart: unless-stopped
     labels: *labels
     environment:
-      POSTGRES_USER: ${ROBO_GRAPH_USER:?}
-      POSTGRES_PASSWORD: ${ROBO_GRAPH_PASSWORD:?}
-      POSTGRES_DB: ${ROBO_GRAPH_DESIGN:?}
-      OG_GRAPH_DESIGN: ${ROBO_GRAPH_DESIGN:?}
-      OG_GRAPH_ANALYSIS: ${ROBO_GRAPH_ANALYSIS:?}
+      # Supabase 이미지는 POSTGRES_PASSWORD 를 supabase_admin · postgres 의 비밀번호로 쓴다(관리자 —
+      # graph-init · authority-init 만 쓴다). 사용자 · DB 이름은 이미지 기본값이어야 Supabase 초기화
+      # (역할 · DB graph · AGE)가 돈다 — 다른 값이면 조용히 건너뛴다(11-26 실측).
+      POSTGRES_PASSWORD: ${ROBO_GRAPH_ADMIN_PASSWORD:?}
+      POSTGRES_HOST: /var/run/postgresql
+      POSTGRES_USER: supabase_admin
+      POSTGRES_DB: postgres
     volumes:
       # **여기가 팀의 데이터 전부다.** 백업 대상이고, 지우면 되돌릴 수 없다.
-      - graph_data:/var/lib/postgresql/data
+      # Ontological 판의 graph_data 와 **다른 볼륨**이다 — 남겨 둔 그 볼륨이 되돌리기 자리다(이관 없음).
+      - graph_age_data:/var/lib/postgresql/data
     healthcheck:
-      # 떴는지 **그리고 초기화가 끝났는지**(compose.central-db.yml 과 같은 검사).
-      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB -q && psql -U $$POSTGRES_USER -d $$POSTGRES_DB -Atc 'SELECT 1 FROM og_catalog.graph LIMIT 1' > /dev/null 2>&1"]
+      # 떴고 · DB `graph` 에 AGE 가 있다(새 볼륨이면 이미지 초기화가 만든다)
+      test: ["CMD-SHELL", "pg_isready -U postgres -h 127.0.0.1 -q && psql -U supabase_admin -h 127.0.0.1 -d graph -Atc \"SELECT 1 FROM pg_extension WHERE extname='age'\" | grep -q 1"]
       interval: 5s
       timeout: 5s
-      retries: 30
-      start_period: 20s
+      retries: 60
+      start_period: 30s
 
-  graph-bolt:
-    image: ghcr.io/uengine-oss/robo-posco-graph-bolt:delivery
-    restart: unless-stopped
+  graph-init:
+    image: ghcr.io/uengine-oss/robo-posco-graph-age:delivery
+    restart: "no"
     labels: *labels
+    entrypoint: ["bash", "-c"]
+    command:
+      - |
+        set -euo pipefail
+        export PGPASSWORD="$$ADMIN_PASSWORD"
+        P="psql -X -q -v ON_ERROR_STOP=1 -h graph-db -U supabase_admin -d graph"
+        echo "graph-init: 앱 role $$APP_ROLE"
+        $$P -v app="$$APP_ROLE" -v pw="$$APP_PASSWORD" <<'SQL'
+        SELECT format('CREATE ROLE %I LOGIN', :'app') WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'app') \gexec
+        -- 사용자마다 role 을 만든다(read 격리) → CREATEROLE. 슈퍼유저는 아니다.
+        SELECT format('ALTER ROLE %I WITH LOGIN NOSUPERUSER CREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS PASSWORD %L', :'app', :'pw') \gexec
+        SELECT format('GRANT CONNECT, CREATE ON DATABASE graph TO %I', :'app') \gexec
+        SELECT format('GRANT USAGE, CREATE ON SCHEMA public TO %I', :'app') \gexec
+        -- 게이트웨이가 graph · 라벨 이름을 찾는다 — 사용자 role(p_<사번>) 도. 이름만이고 데이터는 아니다.
+        -- 사용자 role 도 DB 에 붙는다(데이터는 graph 스키마 GRANT 로만 열린다).
+        -- 이 이미지는 새 DB 의 CONNECT 를 PUBLIC 에 주지 않는다.
+        GRANT CONNECT ON DATABASE graph TO PUBLIC;
+        GRANT USAGE ON SCHEMA ag_catalog TO PUBLIC;
+        GRANT SELECT ON ag_catalog.ag_graph, ag_catalog.ag_label TO PUBLIC;
+        SQL
+        for g in "$$GRAPH_DESIGN" "$$GRAPH_ANALYSIS"; do
+          # 앱 role 로 만든다 — AGE 는 graph 소유자만 라벨을 더한다(게이트웨이 README)
+          PGPASSWORD="$$APP_PASSWORD" psql -X -q -v ON_ERROR_STOP=1 -h graph-db -U "$$APP_ROLE" -d graph -v g="$$g" <<'SQL'
+        -- LOAD 'age' 는 슈퍼유저만 — 이미지가 shared_preload_libraries 로 미리 올린다
+        SET search_path = ag_catalog, "$$user", public;
+        SELECT format('SELECT ag_catalog.create_graph(%L)', :'g') WHERE NOT EXISTS (SELECT 1 FROM ag_catalog.ag_graph WHERE name = :'g') \gexec
+        SQL
+          echo "graph-init: graph $$g"
+        done
+        echo "graph-init: 끝"
     environment:
-      OG_BOLT_LISTEN: 0.0.0.0:7687
-      OG_BOLT_PGHOST: graph-db
-      OG_BOLT_PGPORT: "5432"
-      OG_BOLT_PGDATABASE: ${ROBO_GRAPH_DESIGN:?}
-      OG_BOLT_GRAPH: ${ROBO_GRAPH_DESIGN:?}
-      PGPASSWORD: ${ROBO_GRAPH_PASSWORD:?}
+      ADMIN_PASSWORD: ${ROBO_GRAPH_ADMIN_PASSWORD:?}
+      APP_ROLE: ${ROBO_GRAPH_USER:?}
+      APP_PASSWORD: ${ROBO_GRAPH_PASSWORD:?}
+      GRAPH_DESIGN: ${ROBO_GRAPH_DESIGN:?}
+      GRAPH_ANALYSIS: ${ROBO_GRAPH_ANALYSIS:?}
     depends_on:
       graph-db:
         condition: service_healthy
+
+  graph-bolt:
+    image: ghcr.io/uengine-oss/robo-posco-graph-bolt-age:delivery
+    restart: unless-stopped
+    labels: *labels
+    init: true
+    environment:
+      OG_BOLT_BACKEND: age
+      OG_BOLT_PGHOST: graph-db
+      OG_BOLT_PGPORT: "5432"
+      OG_BOLT_PGDATABASE: graph
+      OG_BOLT_GRAPH: ${ROBO_GRAPH_DESIGN:?}
+    depends_on:
+      graph-init:
+        condition: service_completed_successfully
     healthcheck:
-      # CMD-SHELL(dash) 에는 /dev/tcp 가 없다 — bash 로 명시한다(설치본 compose 주석).
-      test: ["CMD", "bash", "-c", "true</dev/tcp/127.0.0.1/7687"]
+      # 게이트웨이 이미지는 alpine — bash 가 없다(busybox nc)
+      test: ["CMD", "nc", "-z", "127.0.0.1", "7687"]
       interval: 5s
       timeout: 5s
       retries: 24
@@ -550,6 +609,6 @@ services:
       start_period: 30s
 
 volumes:
-  graph_data:
+  graph_age_data:
   shared_data:
   workspace:

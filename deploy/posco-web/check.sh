@@ -165,7 +165,7 @@ else
   [[ $url =~ ^https?://[^/]+$ ]] || bad "ROBO_PUBLIC_URL 은 scheme://host:port (경로 없이)"
   if [[ $FILE == *split* ]]; then
     ip=$(val ROBO_DB_SERVER_IP)
-    [[ $ip != 0.0.0.0 ]] || bad "ROBO_DB_SERVER_IP 에 0.0.0.0 금지 — 사내망 IP 를 쓴다(Bolt 는 평문 인증)"
+    [[ $ip != 0.0.0.0 ]] || bad "ROBO_DB_SERVER_IP 에 0.0.0.0 금지 — 사내망 IP 를 쓴다(DB · 권한 포트가 아무 PC 에나 열린다)"
   fi
 fi
 

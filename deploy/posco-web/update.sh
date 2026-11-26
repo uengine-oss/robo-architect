@@ -14,7 +14,8 @@
 #
 # 분할에서는 서버마다 자기 파일(docker-compose.split.db.yml · .ap.yml)만 띄운다. 묶음은 같은 것을 받는다
 # (DB 서버는 안 쓰는 장도 load 되지만 compose 가 찾는 장만 띄운다). 순서는 DB → AP —
-# AP 의 architect-api 는 DB 서버의 authority · graph-bolt 에 붙어야 healthy 가 된다.
+# AP 의 architect-api 는 DB 서버의 authority · graph-db(5432) 에 붙어야 healthy 가 된다.
+# (AGE 판: Bolt 게이트웨이 graph-bolt 는 AP 에 있다 — 평문 Bolt 가 망을 건너지 않게)
 #
 # ⚠ **sudo 없이** 돌린다. curl 이 일반 계정의 https_proxy 를 써야 github 에 닿는다(sudo 는 그것을 버린다).
 #   docker 는 스크립트 안에서 sudo 로 부른다 — msa-ez 와 같은 root 저장소.
@@ -137,8 +138,22 @@ done
 (( miss == 0 )) || { echo "X 가 $miss 장 — 그 장을 tar 에 넣어 다시 받는다" >&2; exit 1; }
 
 echo "[5] 바꿔 띄우기 ($ROLE)"
-# 권한 표(authority-init) — 권한 서버가 있는 쪽(통합 · DB)에서만. 다시 돌려도 안전하다
-[[ $ROLE == ap ]] || "${DC[@]}" up -d --force-recreate --no-deps authority-init
+# 그래프 DB → graph-init(앱 role · 고정 graph 둘) → 권한 표(authority-init) — DB 가 있는 쪽(통합 · DB)에서만.
+# 셋 다 다시 돌려도 안전하다. AGE 판 첫 기동은 **새 볼륨**(graph_age_data)이라 이 순서가 없으면
+# authority-init 이 빈 DB 에 붙다 멈춘다.
+if [[ $ROLE != ap ]]; then
+  "${DC[@]}" up -d --no-deps --pull never graph-db
+  printf '  graph-db 기다림'
+  for _ in $(seq 1 60); do
+    s=$(health robo-posco-web-graph-db-1); [[ $s == healthy ]] && break
+    printf ' .'; sleep 5
+  done
+  echo " → $s"
+  [[ $s == healthy ]] || { echo "graph-db 가 healthy 가 아니다 — ${DC[*]} logs --tail 30 graph-db" >&2; exit 1; }
+  "${DC[@]}" up --no-deps --pull never --force-recreate --exit-code-from graph-init graph-init ||
+    { echo "graph-init 실패 — 위 로그" >&2; exit 1; }
+  "${DC[@]}" up -d --force-recreate --no-deps --pull never authority-init
+fi
 # 먼저 띄워 기다릴 장 — 통합 · AP 는 architect-api, DB 는 authority
 first=architect-api; [[ $ROLE == db ]] && first=authority
 if [[ " $FORCE " == *" $first "* ]]; then
@@ -164,7 +179,7 @@ sleep 10
 "${DC[@]}" ps -a
 [[ $TAG == --no-images ]] || rm -f "$ASSET" "$ASSET.sha256"
 case $ROLE in
-  db) echo "끝 — DB 3장 healthy · authority-init Exited (0) 인지 본다 → 이제 AP 서버에서 bash update.sh split.ap $TAG" ;;
-  ap) echo "끝 — AP 8장 healthy 인지 본다" ;;
-  *)  echo "끝 — 11장 healthy · authority-init Exited (0) 인지 위에서 본다" ;;
+  db) echo "끝 — DB 2장(graph-db · authority) healthy · graph-init · authority-init Exited (0) 인지 본다 → 이제 AP 서버에서 bash update.sh split.ap $TAG" ;;
+  ap) echo "끝 — AP 9장(graph-bolt 포함) healthy 인지 본다" ;;
+  *)  echo "끝 — 11장 healthy · graph-init · authority-init Exited (0) 인지 위에서 본다" ;;
 esac

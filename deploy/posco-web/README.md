@@ -11,7 +11,7 @@ msa-ez 가 이미 같은 방식으로 돈다 — 통합 서버 한 대 / AP·DB 
 브라우저 ──► web (nginx :8080) ──/api/**──► architect-api ──► authority (SWP·승인·공유)
                │ 빌드된 자산만                    │  └─/api/gateway/** (로그인·권한을 본 뒤)
                │ /analyzer/ = 분석 화면           │        └──► gateway ─► analyzer·catalog·fabric·parser
-               └──────────────────────────────── └──► graph-bolt / graph-db (Ontological)
+               └──────────────────────────────── └──► graph-bolt / graph-db (Apache AGE)
                                                       wireframe
 ```
 
@@ -20,8 +20,8 @@ msa-ez 가 이미 같은 방식으로 돈다 — 통합 서버 한 대 / AP·DB 
 | 파일 | 무엇 |
 |---|---|
 | `docker-compose.yml` | **통합 서버 한 대.** 기준 파일 |
-| `docker-compose.split.db.yml` | DB 서버 — graph-db · graph-bolt · authority(+init) |
-| `docker-compose.split.ap.yml` | AP 서버 — web · architect-api · 분석 다섯 · wireframe |
+| `docker-compose.split.db.yml` | DB 서버 — graph-db · authority (+ graph-init · authority-init 은 한 번 돌고 끝) |
+| `docker-compose.split.ap.yml` | AP 서버 — web · architect-api · **graph-bolt** · 분석 다섯 · wireframe |
 | `.env.example` | 사람이 넣는 값 **전부**. 분할이면 두 서버에 같은 파일 |
 | `authority-init.py` | 권한 서버 최초 초기화(역할 → migrate → 관리자 → 정책). 다시 돌려도 안전 |
 | `check.sh` | 띄우기 전 검사. 아무것도 안 바꾸고 비밀은 이름·길이만 찍는다 |
@@ -50,8 +50,10 @@ DB 서버:  bash check.sh split.db && docker compose -f docker-compose.split.db.
 AP 서버:  bash check.sh split.ap && docker compose -f docker-compose.split.ap.yml up -d --wait
 ```
 
-DB 서버는 5432 · 7687 · 59020 을 `ROBO_DB_SERVER_IP` 에 연다. **AP 서버에서만 닿게**
-방화벽을 둔다 — Bolt 는 평문 인증이다. AP 서버는 8080 하나만 연다.
+DB 서버는 5432 · 59020 을 `ROBO_DB_SERVER_IP` 에 연다. **AP 서버에서만 닿게**
+방화벽을 둔다. AP 서버는 8080 하나만 연다.
+AGE 판(2026-11-26~)부터 Bolt 게이트웨이(graph-bolt)는 **AP 에서 돈다** — Bolt 는 평문 인증이라
+망을 건너는 것은 PostgreSQL(scram-sha-256)뿐이다. 7687 은 열지 않는다.
 
 ## 값 — 사람이 넣는 것은 `.env` 하나
 
@@ -73,7 +75,8 @@ DB 서버는 5432 · 7687 · 59020 을 `ROBO_DB_SERVER_IP` 에 연다. **AP 서�
 | (msa-ez 의 OPENAI_BASE_URL) | `ROBO_AI_BASE_URL` | 모든 AI 주소 칸 |
 | `$GRAPH_HOST` · `SERVER_IP` · `ROBO_GRAPH_BIND` · `ROBO_AUTHORITY_BIND` | `ROBO_DB_SERVER_IP` (분할만) | 통합 서버는 서비스 이름으로 붙어 필요 없다 |
 | `$GRAPH_PASSWORD` · `GRAPH_PW` | `ROBO_GRAPH_PASSWORD` | 그래프 소유자 |
-| `$GRAPH_PG_PORT` · `$GRAPH_BOLT_PORT` | `ROBO_DB_PG_PORT` · `ROBO_DB_BOLT_PORT` (분할만) | |
+| `$GRAPH_PG_PORT` | `ROBO_DB_PG_PORT` (분할만) | Bolt 포트는 AGE 판부터 없음(게이트웨이가 AP 안) |
+| — | `ROBO_GRAPH_ADMIN_PASSWORD` | AGE DB 관리자(supabase_admin) — graph-init · authority-init 만 쓴다 |
 | `$ROLE_SECRET` · `$JWT_SECRET` | `AUTH_ROLE_SECRET` · `AUTH_JWT_SECRET` | authority **와 architect-api 둘 다**(같은 값) |
 | `AUTH_RT_PW` | `ROBO_AUTHORITY_DB_PASSWORD` | robo_authority 역할 |
 | `OPER_PW` | — | 운영 DSN 은 소유자로(§결정 ④) |
@@ -136,7 +139,7 @@ msa-ez 는 비밀을 yml 에 바로 적는다. 여기서는 그러지 않는다 
 | architect-api | `robo-posco-architect-api` | 〃 | 〃 |
 | analyzer | `robo-posco-analyzer` | 〃 | 〃 (서브모듈 핀 · 2026-11-17 부터) |
 | authority (+init) | `robo-posco-authority` | 〃 | 〃 (2026-11-19 부터 · api 전체 · `CUSTOMER=posco`) |
-| graph-db · graph-bolt | `robo-posco-graph-db` · `-graph-bolt` | `delivery` | 납품판 `0.1.0-wde10ff6c-afff41f36-scda199-rdel-swp` 이미지에 태그만 옮김 |
+| graph-db (+graph-init) · graph-bolt | `robo-posco-graph-age` · `-graph-bolt-age` | `delivery` | AGE 판(2026-11-26~) — Supabase Postgres 15.8 + AGE 1.8.0 · ontological-db `age/main` 게이트웨이. Ontological 판(`robo-posco-graph-db` · `-graph-bolt`)은 되돌리기용으로 남긴다 |
 | catalog · fabric · parser · gateway · wireframe | `robo-posco-*` | `delivery` | 〃 (코드가 각 저장소 main 과 같다 · 11-18 실측) |
 
 어느 커밋이 올라와 있나는 라벨 `org.opencontainers.image.revision` 으로 본다(운영-업데이트-가이드 §5).
@@ -263,10 +266,10 @@ DB 역할 — 런타임만 제한, 프로젝트 운영은 소유자
 ## 서버를 지키는 두 가지 — **compose 가 못 하는 일**
 
 ```text
-① DB 포트는 compose 가 **좁혀 주지 않는다.** 분할 판의 split.db 는 5432 · 7687 · 59020 을
+① DB 포트는 compose 가 **좁혀 주지 않는다.** 분할 판의 split.db 는 5432 · 59020 을
    `${ROBO_DB_SERVER_IP}` 에 **묶기만** 한다 — 같은 사내망의 아무 PC 에서나 닿는다.
    "AP 서버에서만" 은 **호스트 방화벽**이 하는 일이다(가이드 §7 에 적었다).
-   Bolt 는 평문 인증이라 그대로 두면 안 된다
+   (Bolt 는 평문 인증이라 AGE 판부터 망을 건너지 않는다 — 게이트웨이가 AP 안)
 ② 메모리 상한 손잡이를 두었다 — `ROBO_MEM_{API,ANALYZER,PARSER,GATEWAY}`.
    기본 **0 = 제한 없음**(지금 동작 그대로). 숫자를 안 꾸며 넣은 이유는 **안 재서**다 —
    쉬는 값만 알고(analyzer 228MiB · parser 676MiB · gateway 518MiB, 2026-11-11) 돌 때를 모른다.
@@ -298,7 +301,7 @@ DB 역할 — 런타임만 제한, 프로젝트 운영은 소유자
 - 통합(2026-11-18) 뒤로 이 판은 **`main`** 에서 `CUSTOMER=posco` 로 굽는다. 예전 가지는 태그로 남았다:
   `archive/enterprise-custom-p`(설치본 가지) · posco-web 은 현장 반영 뒤 `archive/posco-web`.
   동결된 납품 이미지 `0.1.0-…-rdel-swp` 는 **안 건드렸다.**
-- 서버의 `graph_data` 볼륨이 데이터 전부다. `down -v` · `volume prune` 금지.
+- 서버의 `graph_age_data` 볼륨이 데이터 전부다(AGE 판 · Ontological 판 `graph_data` 는 되돌리기용). `down -v` · `volume prune` 금지.
   내릴 때는 `docker compose stop`(또는 `down` — 볼륨은 남는다).
 
 ## 현장에서 처음 할 확인 (사람)

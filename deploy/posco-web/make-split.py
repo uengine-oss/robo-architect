@@ -13,10 +13,11 @@
 
 ## 바꾸는 것 (그 밖에는 글자 하나 안 바꾼다)
 
-DB 서버  graph-db · graph-bolt · authority · authority-init
-         AP 서버가 닿아야 하므로 포트 셋을 `${ROBO_DB_SERVER_IP}` 에 연다
-AP 서버  나머지 전부
-         graph-bolt · graph-db · authority 를 가리키는 주소를 DB 서버 IP 로 바꾸고,
+DB 서버  graph-db · graph-init · authority · authority-init
+         AP 서버가 닿아야 하므로 포트 둘(5432 · 59020)을 `${ROBO_DB_SERVER_IP}` 에 연다
+AP 서버  나머지 전부 — **graph-bolt(Bolt 게이트웨이)도 AP 에 둔다**(AGE 판, 2026-11-26)
+         Bolt 는 비밀번호를 평문으로 보낸다 → 망을 건너는 것은 PostgreSQL(scram-sha-256)뿐이게.
+         graph-db · authority 를 가리키는 주소를 DB 서버 IP 로 바꾸고,
          DB 쪽 서비스를 기다리던 depends_on 을 뺀다(다른 서버라 compose 가 못 기다린다)
 """
 
@@ -30,18 +31,18 @@ SOURCE = HERE / "docker-compose.yml"
 DB_FILE = HERE / "docker-compose.split.db.yml"
 AP_FILE = HERE / "docker-compose.split.ap.yml"
 
-DB_SERVICES = ("graph-db", "graph-bolt", "authority", "authority-init")
+DB_SERVICES = ("graph-db", "graph-init", "authority", "authority-init")
 
 DB_PORTS = {
     "graph-db": '      - "${ROBO_DB_SERVER_IP:?}:${ROBO_DB_PG_PORT:-5432}:5432"',
-    "graph-bolt": '      - "${ROBO_DB_SERVER_IP:?}:${ROBO_DB_BOLT_PORT:-7687}:7687"',
     "authority": '      - "${ROBO_DB_SERVER_IP:?}:${ROBO_AUTHORITY_PORT:-59020}:59020"',
 }
 
 AP_REWRITES = (
-    ("bolt://graph-bolt:7687", "bolt://${ROBO_DB_SERVER_IP:?}:${ROBO_DB_BOLT_PORT:-7687}"),
     ("OG_PG_HOST: graph-db", "OG_PG_HOST: ${ROBO_DB_SERVER_IP:?}"),
     ('OG_PG_PORT: "5432"', "OG_PG_PORT: ${ROBO_DB_PG_PORT:-5432}"),
+    ("OG_BOLT_PGHOST: graph-db", "OG_BOLT_PGHOST: ${ROBO_DB_SERVER_IP:?}"),
+    ('OG_BOLT_PGPORT: "5432"', "OG_BOLT_PGPORT: ${ROBO_DB_PG_PORT:-5432}"),
     ("http://authority:59020", "http://${ROBO_DB_SERVER_IP:?}:${ROBO_AUTHORITY_PORT:-59020}"),
 )
 
@@ -151,7 +152,10 @@ def build() -> Dict[Path, str]:
     db += pre + "services:\n"
     for name in DB_SERVICES:
         db += add_ports(name, strip_comment_tail(blocks[name])) + "\n"
-    db = db.rstrip() + "\n\nvolumes:\n  graph_data:\n"
+    all_volumes = re.findall(r"^  ([a-z_]+):", volumes, re.M)
+    db_volumes = [v for v in all_volumes if v.startswith("graph_")]
+    assert db_volumes, "통합 파일에 graph_* 볼륨이 없다"
+    db = db.rstrip() + "\n\nvolumes:\n" + "".join(f"  {v}:\n" for v in db_volumes)
 
     ap = HEADER.format(role="AP 서버", usage="docker compose -f docker-compose.split.ap.yml up -d --wait")
     ap += pre + "services:\n"
@@ -162,13 +166,16 @@ def build() -> Dict[Path, str]:
         for old, new in AP_REWRITES:
             block = block.replace(old, new)
         ap += drop_db_dependencies(block) + "\n"
-    ap_volumes = [v for v in re.findall(r"^  ([a-z_]+):", volumes, re.M) if v != "graph_data"]
+    ap_volumes = [v for v in all_volumes if v not in db_volumes]
     ap = ap.rstrip() + "\n\nvolumes:\n" + "".join(f"  {v}:\n" for v in ap_volumes)
 
     # 남은 내부 이름이 있으면 그 서비스는 다른 서버에서 **조용히 닿지 않는다.**
     for svc in DB_SERVICES:
-        for hit in re.findall(rf"[/@ ]{re.escape(svc)}:\d+", ap):
+        for hit in re.findall(rf"[/@ ]{re.escape(svc)}:\d+|: {re.escape(svc)}$", ap, re.M):
             raise SystemExit(f"AP 파일에 DB 서비스 주소가 남았다: {hit.strip()}")
+    # Bolt(평문)는 망을 건너지 않는다 — 게이트웨이는 AP 에만
+    if "  graph-bolt:\n" in db or "  graph-bolt:\n" not in ap:
+        raise SystemExit("graph-bolt 는 AP 파일에만 있어야 한다")
     return {DB_FILE: db, AP_FILE: ap}
 
 

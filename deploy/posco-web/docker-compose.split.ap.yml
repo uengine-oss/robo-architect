@@ -51,6 +51,8 @@ services:
       #   central  여럿이 한 저장소를 쓴다. 이미 있는 사용자 role 의 비밀번호를
       #            덮지 않는다(projects/roles.py). 통합 서버도 여럿이 쓰므로 central 이다.
       ROBO_GRAPH_MODE: central
+      # 그래프 엔진 — AGE 판(2026-11-26~). 프로젝트 권한 행은 public.app_project_members(api/features/projects/engine.py)
+      ROBO_GRAPH_ENGINE: age
       ROBO_PACKAGED_RUNTIME: "1"
       # 요청마다 로그인한 사람의 role 로 그래프에 붙는다. 설치본 `.env` 는 false 였지만
       # Electron 이 프로세스 환경으로 true 를 넣어 **실효값은 true** 였다(backend.ts).
@@ -67,14 +69,14 @@ services:
       AUTH_ROLE_SECRET: ${AUTH_ROLE_SECRET:?}
       AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:?}
       # 그래프 — 설계 graph 와 분석 graph 는 **달라야 한다**(같으면 분석이 설계를 지운다).
-      NEO4J_URI: bolt://${ROBO_DB_SERVER_IP:?}:${ROBO_DB_BOLT_PORT:-7687}
+      NEO4J_URI: bolt://graph-bolt:7687
       NEO4J_USER: ${ROBO_GRAPH_USER:?}
       NEO4J_PASSWORD: ${ROBO_GRAPH_PASSWORD:?}
       NEO4J_DATABASE: ${ROBO_GRAPH_DESIGN:?}
       ANALYZER_NEO4J_DATABASE: ${ROBO_GRAPH_ANALYSIS:?}
       OG_PG_HOST: ${ROBO_DB_SERVER_IP:?}
       OG_PG_PORT: ${ROBO_DB_PG_PORT:-5432}
-      OG_PG_DATABASE: ${ROBO_GRAPH_DESIGN:?}
+      OG_PG_DATABASE: graph   # AGE 는 DB 하나(graph) 안에 graph 마다 스키마 하나
       OG_PG_USER: ${ROBO_GRAPH_USER:?}
       OG_PG_PASSWORD: ${ROBO_GRAPH_PASSWORD:?}
       # 안쪽 서비스 — 설치본은 127.0.0.1:<동적포트> 였다(docker-stack.ts).
@@ -154,6 +156,8 @@ services:
       # 코드 생성·제안 구현의 대상 프로젝트가 놓이는 **서버 쪽** 자리(README §결정 ①).
       - workspace:/workspace
     depends_on:
+      graph-bolt:
+        condition: service_healthy
       gateway:
         condition: service_healthy
     # Dockerfile.api 의 HEALTHCHECK 와 같은 것 — web 처럼 podman load 에서 빠지므로 여기 다시 적는다.
@@ -164,18 +168,40 @@ services:
       retries: 18
       start_period: 30s
 
+  graph-bolt:
+    image: ghcr.io/uengine-oss/robo-posco-graph-bolt-age:delivery
+    restart: unless-stopped
+    labels: *labels
+    init: true
+    environment:
+      OG_BOLT_BACKEND: age
+      OG_BOLT_PGHOST: ${ROBO_DB_SERVER_IP:?}
+      OG_BOLT_PGPORT: ${ROBO_DB_PG_PORT:-5432}
+      OG_BOLT_PGDATABASE: graph
+      OG_BOLT_GRAPH: ${ROBO_GRAPH_DESIGN:?}
+    healthcheck:
+      # 게이트웨이 이미지는 alpine — bash 가 없다(busybox nc)
+      test: ["CMD", "nc", "-z", "127.0.0.1", "7687"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 10s
+
   fabric:
     image: ghcr.io/uengine-oss/robo-posco-fabric:delivery
     restart: unless-stopped
     labels: *labels
     environment:
-      NEO4J_URI: bolt://${ROBO_DB_SERVER_IP:?}:${ROBO_DB_BOLT_PORT:-7687}
+      NEO4J_URI: bolt://graph-bolt:7687
       NEO4J_USER: ${ROBO_GRAPH_USER:?}
       NEO4J_PASSWORD: ${ROBO_GRAPH_PASSWORD:?}
       NEO4J_DATABASE: ${ROBO_GRAPH_ANALYSIS:?}
       DATA_FABRIC_ALLOW_NEO4J_HEADER_OVERRIDE: "true"
       DATA_FABRIC_QUERY_TIMEOUT_SECONDS: "30"
       OPENAI_API_KEY: ${ROBO_AI_API_KEY:?}
+    depends_on:
+      graph-bolt:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "__import__('urllib.request').request.urlopen('http://127.0.0.1:8404/health',timeout=3)"]
       interval: 5s
@@ -189,7 +215,7 @@ services:
     labels: *labels
     environment:
       TIKTOKEN_CACHE_DIR: /opt/tiktoken-cache
-      NEO4J_URI: bolt://${ROBO_DB_SERVER_IP:?}:${ROBO_DB_BOLT_PORT:-7687}
+      NEO4J_URI: bolt://graph-bolt:7687
       NEO4J_USER: ${ROBO_GRAPH_USER:?}
       NEO4J_PASSWORD: ${ROBO_GRAPH_PASSWORD:?}
       NEO4J_DATABASE: ${ROBO_GRAPH_ANALYSIS:?}
@@ -217,6 +243,8 @@ services:
     volumes:
       - ./tiktoken-cache:/opt/tiktoken-cache:ro,z   # tiktoken 사전 — 사내망은 openaipublic.blob.core.windows.net 에 못 닿는다
     depends_on:
+      graph-bolt:
+        condition: service_healthy
       fabric:
         condition: service_healthy
     healthcheck:
@@ -238,11 +266,11 @@ services:
       # (/opt/hf · 빌드 인자 RERANKER_*). 사내망은 HF Hub 에 못 닿으므로 받으러 나가지 않게 한다.
       # 모델을 못 실으면 analyzer 가 키워드(BM25) 점수로 대신한다(c9358f80).
       HF_HUB_OFFLINE: "1"
-      ROBO_NEO4J_URI: bolt://${ROBO_DB_SERVER_IP:?}:${ROBO_DB_BOLT_PORT:-7687}
+      ROBO_NEO4J_URI: bolt://graph-bolt:7687
       ROBO_NEO4J_USER: ${ROBO_GRAPH_USER:?}
       ROBO_NEO4J_PASSWORD: ${ROBO_GRAPH_PASSWORD:?}
       ROBO_NEO4J_DATABASE: ${ROBO_GRAPH_ANALYSIS:?}
-      NEO4J_URI: bolt://${ROBO_DB_SERVER_IP:?}:${ROBO_DB_BOLT_PORT:-7687}
+      NEO4J_URI: bolt://graph-bolt:7687
       NEO4J_USER: ${ROBO_GRAPH_USER:?}
       NEO4J_PASSWORD: ${ROBO_GRAPH_PASSWORD:?}
       NEO4J_DATABASE: ${ROBO_GRAPH_ANALYSIS:?}
@@ -311,6 +339,8 @@ services:
       # 이미지 가격표에 gpt-4.1 이 없어 분석이 거부된다 — 파일 머리말 참고.
       - ./analyzer-llm/llm_pricing.yaml:/app/llm/usage/llm_pricing.yaml:ro,z
     depends_on:
+      graph-bolt:
+        condition: service_healthy
       catalog:
         condition: service_healthy
     healthcheck:
