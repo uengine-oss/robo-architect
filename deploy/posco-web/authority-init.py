@@ -84,6 +84,9 @@ def grant_authority_role(dsn: str, role: str = "robo_authority") -> None:
     r = sql.Identifier(role)
     t = lambda name: sql.SQL("public.") + sql.Identifier(name)  # noqa: E731
     with psycopg.connect(dsn, autocommit=True) as conn, conn.cursor() as cur:
+        # DB 접속 — AGE 판 이미지(Supabase Postgres)는 새 DB 의 CONNECT 를 PUBLIC 에 주지 않는다(2026-11-26).
+        cur.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(
+            sql.Identifier(conn.info.dbname), r))
         cur.execute(sql.SQL("GRANT USAGE ON SCHEMA public TO {}").format(r))
         for seq in _EXPECTED_SEQUENCES:
             cur.execute(sql.SQL("GRANT USAGE, SELECT ON SEQUENCE {} TO {}").format(t(seq), r))
@@ -119,6 +122,26 @@ def grant_authority_role(dsn: str, role: str = "robo_authority") -> None:
     print(f"  grants {role}: 계정 표 {len(_EXPECTED_TABLES)} · 시퀀스 {len(_EXPECTED_SEQUENCES)}")
 
 
+def hand_over_tables(dsn: str) -> None:
+    """AGE 판(2026-11-26): 관리자가 만든 public.app_* 표 · 시퀀스의 소유권을 앱 role 에.
+
+    Ontological 판은 앱 role 이 곧 DB 소유자(POSTGRES_USER)라 할 일이 없다 — ROBO_APP_DB_ROLE 이 비면 건너뛴다.
+    """
+    app = (os.environ.get("ROBO_APP_DB_ROLE") or "").strip()
+    if not app:
+        return
+    with psycopg.connect(dsn, autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute("SELECT c.relname, c.relkind FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+                    "WHERE n.nspname = 'public' AND left(c.relname, 4) = 'app_' AND c.relkind IN ('r', 'S') "
+                    "AND pg_get_userbyid(c.relowner) <> %s", (app,))
+        rows = cur.fetchall()
+        for name, kind in rows:
+            what = "TABLE" if kind == "r" else "SEQUENCE"
+            cur.execute(sql.SQL("ALTER " + what + " public.{} OWNER TO {}").format(
+                sql.Identifier(name), sql.Identifier(app)))
+    print(f"  owner {app}: app_* {len(rows)}개 넘김")
+
+
 def admin(*args: str) -> None:
     print(f"  accounts_admin {args[0]}")
     done = subprocess.run([sys.executable, "-m", "scripts.accounts_admin", *args],
@@ -145,6 +168,7 @@ def main() -> None:
     ensure_roles(dsn)
     admin("migrate")
     grant_authority_role(dsn)
+    hand_over_tables(dsn)   # grant_authority_role 이 만드는 app_project_members 까지(AGE)
     for empno in empnos:
         admin("grant", "--employee-no", empno, "--reason", "initial administrator (compose)")
     admin("policy", "--approval-required", approval, "--reason", "posco-web approval policy")

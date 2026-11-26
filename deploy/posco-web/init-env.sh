@@ -22,7 +22,12 @@ else
   echo ".env 를 만들었다 (.env.example 복사)"
 fi
 
-for n in ROBO_GRAPH_PASSWORD ROBO_AUTHORITY_DB_PASSWORD AUTH_JWT_SECRET AUTH_ROLE_SECRET; do
+# 나중에 생긴 비밀(2026-11-26 AGE 판 ROBO_GRAPH_ADMIN_PASSWORD)은 이미 쓰던 .env 에 칸이 없다 — 칸을 더해 아래에서 채운다.
+for n in ROBO_GRAPH_ADMIN_PASSWORD; do
+  grep -q "^$n=" .env || { echo "$n=CHANGE_ME" >> .env; echo "  칸 더함 $n"; }
+done
+
+for n in ROBO_GRAPH_PASSWORD ROBO_AUTHORITY_DB_PASSWORD AUTH_JWT_SECRET AUTH_ROLE_SECRET ROBO_GRAPH_ADMIN_PASSWORD; do
   if grep -q "^$n=CHANGE_ME" .env; then
     v=$(openssl rand -hex 24 2>/dev/null || head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')
     sed -i "s/^$n=CHANGE_ME.*/$n=$v/" .env

@@ -25,9 +25,9 @@ services:
       # Supabase 이미지는 POSTGRES_PASSWORD 를 supabase_admin · postgres 의 비밀번호로 쓴다(관리자 — graph-init 만 쓴다).
       POSTGRES_PASSWORD: ${ROBO_GRAPH_ADMIN_PASSWORD:?}
       POSTGRES_HOST: /var/run/postgresql
-      # 통합 파일의 값(robo · 설계 graph 이름)을 Supabase 이미지 기본값으로 덮는다 — 그 이미지는 postgres DB 와
+      # 통합 파일의 값(robo · 설계 graph 이름)을 Supabase 이미지 기본값(supabase_admin · postgres)으로 덮는다 — 다른 값이면 Supabase 초기화(역할 · graph DB · AGE)를 건너뛴다 — 그 이미지는 postgres DB 와
       # supabase_admin 을 전제로 초기화한다. 앱 role 은 graph-init 이 따로 만든다. (`!reset` 은 compose 2.24~ 라 쓰지 않는다)
-      POSTGRES_USER: postgres
+      POSTGRES_USER: supabase_admin
       POSTGRES_DB: postgres
     healthcheck:
       # 떴고 · DB `graph` 에 AGE 가 있다(새 볼륨이면 이미지 초기화가 만든다)
@@ -56,13 +56,16 @@ services:
         SELECT format('GRANT CONNECT, CREATE ON DATABASE graph TO %I', :'app') \gexec
         SELECT format('GRANT USAGE, CREATE ON SCHEMA public TO %I', :'app') \gexec
         -- 게이트웨이가 graph · 라벨 이름을 찾는다 — 사용자 role(p_<사번>) 도. 이름만이고 데이터는 아니다.
+        -- 사용자 role 도 DB 에 붙는다(read 등급은 자기 role 로 — 데이터는 graph 스키마 GRANT 로만 열린다).
+        -- 이 이미지는 새 DB 의 CONNECT 를 PUBLIC 에 주지 않는다.
+        GRANT CONNECT ON DATABASE graph TO PUBLIC;
         GRANT USAGE ON SCHEMA ag_catalog TO PUBLIC;
         GRANT SELECT ON ag_catalog.ag_graph, ag_catalog.ag_label TO PUBLIC;
         SQL
         for g in "$$GRAPH_DESIGN" "$$GRAPH_ANALYSIS"; do
           # 앱 role 로 만든다 — AGE 는 graph 소유자만 라벨을 더한다(게이트웨이 README)
           PGPASSWORD="$$APP_PASSWORD" psql -X -q -v ON_ERROR_STOP=1 -h graph-db -U "$$APP_ROLE" -d graph -v g="$$g" <<'SQL'
-        LOAD 'age';
+        -- LOAD 'age' 는 슈퍼유저만 — 이미지가 shared_preload_libraries 로 미리 올린다
         SET search_path = ag_catalog, "$$user", public;
         SELECT format('SELECT ag_catalog.create_graph(%L)', :'g') WHERE NOT EXISTS (SELECT 1 FROM ag_catalog.ag_graph WHERE name = :'g') \gexec
         SQL
@@ -85,6 +88,9 @@ services:
     environment:
       OG_BOLT_BACKEND: age
       OG_BOLT_PGDATABASE: graph
+    healthcheck:
+      # 게이트웨이 이미지는 alpine — bash 가 없어 통합 파일의 /dev/tcp 검사가 늘 실패한다(busybox nc)
+      test: ["CMD", "nc", "-z", "127.0.0.1", "7687"]
     depends_on:
       graph-init:
         condition: service_completed_successfully
@@ -93,8 +99,11 @@ services:
     environment:
       <<: *age-pg
       ROBO_GRAPH_ENGINE: age
-      # 역할 · 표 권한을 주는 한 번 — 관리자 자격(Supabase 이미지의 supabase_admin)
+      # accounts_admin 은 슈퍼유저를 요구한다 → 관리자(supabase_admin)로 돌고, 만든 app_* 표 · 시퀀스는
+      # **앱 role 에게 소유권을 넘긴다**(ROBO_APP_DB_ROLE) — Ontological 판처럼 앱 role 이 소유자여야 앱이 쓴다.
       OG_PG_DSN: postgresql://supabase_admin:${ROBO_GRAPH_ADMIN_PASSWORD:?}@graph-db:5432/graph
+      ROBO_APP_DB_ROLE: ${ROBO_GRAPH_USER:?}
+      ROBO_PROJECT_OPERATOR_DSN: postgresql://${ROBO_GRAPH_USER:?}:${ROBO_GRAPH_PASSWORD:?}@graph-db:5432/graph
     depends_on:
       graph-init:
         condition: service_completed_successfully
@@ -104,6 +113,7 @@ services:
       <<: *age-pg
       ROBO_GRAPH_ENGINE: age
       OG_PG_DSN: postgresql://robo_authority:${ROBO_AUTHORITY_DB_PASSWORD:?}@graph-db:5432/graph
+      ROBO_PROJECT_OPERATOR_DSN: postgresql://${ROBO_GRAPH_USER:?}:${ROBO_GRAPH_PASSWORD:?}@graph-db:5432/graph
 
   architect-api:
     environment:
