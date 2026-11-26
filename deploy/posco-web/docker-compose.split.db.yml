@@ -23,20 +23,17 @@ services:
     ports:
       - "${ROBO_DB_SERVER_IP:?}:${ROBO_DB_PG_PORT:-5432}:5432"
     environment:
-      # Supabase 이미지는 POSTGRES_PASSWORD 를 supabase_admin · postgres 의 비밀번호로 쓴다(관리자 —
-      # graph-init · authority-init 만 쓴다). 사용자 · DB 이름은 이미지 기본값이어야 Supabase 초기화
-      # (역할 · DB graph · AGE)가 돈다 — 다른 값이면 조용히 건너뛴다(11-26 실측).
+      # 관리자 postgres 의 비밀번호 — graph-init · authority-init 만 쓴다. 새 볼륨의 첫 실행에서
+      # 이미지의 10-age.sql 이 AGE 확장 · DB graph(LC_COLLATE C) · DROP 막이를 만든다.
       POSTGRES_PASSWORD: ${ROBO_GRAPH_ADMIN_PASSWORD:?}
-      POSTGRES_HOST: /var/run/postgresql
-      POSTGRES_USER: supabase_admin
-      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
     volumes:
       # **여기가 팀의 데이터 전부다.** 백업 대상이고, 지우면 되돌릴 수 없다.
       # Ontological 판의 graph_data 와 **다른 볼륨**이다 — 남겨 둔 그 볼륨이 되돌리기 자리다(이관 없음).
       - graph_age_data:/var/lib/postgresql/data
     healthcheck:
       # 떴고 · DB `graph` 에 AGE 가 있다(새 볼륨이면 이미지 초기화가 만든다)
-      test: ["CMD-SHELL", "pg_isready -U postgres -h 127.0.0.1 -q && psql -U supabase_admin -h 127.0.0.1 -d graph -Atc \"SELECT 1 FROM pg_extension WHERE extname='age'\" | grep -q 1"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -h 127.0.0.1 -q && psql -U postgres -h 127.0.0.1 -d graph -Atc \"SELECT 1 FROM pg_extension WHERE extname='age'\" | grep -q 1"]
       interval: 5s
       timeout: 5s
       retries: 60
@@ -51,7 +48,7 @@ services:
       - |
         set -euo pipefail
         export PGPASSWORD="$$ADMIN_PASSWORD"
-        P="psql -X -q -v ON_ERROR_STOP=1 -h graph-db -U supabase_admin -d graph"
+        P="psql -X -q -v ON_ERROR_STOP=1 -h graph-db -U postgres -d graph"
         echo "graph-init: 앱 role $$APP_ROLE"
         $$P -v app="$$APP_ROLE" -v pw="$$APP_PASSWORD" <<'SQL'
         SELECT format('CREATE ROLE %I LOGIN', :'app') WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'app') \gexec
@@ -128,9 +125,9 @@ services:
     labels: *labels
     environment:
       <<: *authority-env
-      # accounts_admin 은 슈퍼유저를 요구한다 → 관리자(supabase_admin)로 돌고, 만든 app_* 표 · 시퀀스는
+      # accounts_admin 은 슈퍼유저를 요구한다 → 관리자(postgres)로 돌고, 만든 app_* 표 · 시퀀스는
       # **앱 role 에게 소유권을 넘긴다**(ROBO_APP_DB_ROLE) — 앱 role 이 소유자여야 앱이 쓴다.
-      OG_PG_DSN: postgresql://supabase_admin:${ROBO_GRAPH_ADMIN_PASSWORD:?}@graph-db:5432/graph
+      OG_PG_DSN: postgresql://postgres:${ROBO_GRAPH_ADMIN_PASSWORD:?}@graph-db:5432/graph
       ROBO_APP_DB_ROLE: ${ROBO_GRAPH_USER:?}
       ROBO_AUTHORITY_DB_PASSWORD: ${ROBO_AUTHORITY_DB_PASSWORD:?}
       ROBO_ADMIN_EMPNO: ${ROBO_ADMIN_EMPNO:?최초 관리자 사번}

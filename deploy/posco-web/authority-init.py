@@ -84,7 +84,7 @@ def grant_authority_role(dsn: str, role: str = "robo_authority") -> None:
     r = sql.Identifier(role)
     t = lambda name: sql.SQL("public.") + sql.Identifier(name)  # noqa: E731
     with psycopg.connect(dsn, autocommit=True) as conn, conn.cursor() as cur:
-        # DB 접속 — AGE 판 이미지(Supabase Postgres)는 새 DB 의 CONNECT 를 PUBLIC 에 주지 않는다(2026-11-26).
+        # DB 접속 — AGE 판 이미지(deploy/graph-age 10-age.sql)는 DB graph 의 CONNECT 를 PUBLIC 에서 거둔다(2026-11-26).
         cur.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(
             sql.Identifier(conn.info.dbname), r))
         cur.execute(sql.SQL("GRANT USAGE ON SCHEMA public TO {}").format(r))

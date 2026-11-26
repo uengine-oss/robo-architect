@@ -9,6 +9,7 @@
 #   ghcr.io/uengine-oss/robo-posco-web:{posco-web-<sha>, delivery}
 #   ghcr.io/uengine-oss/robo-posco-analyzer:{posco-web-<sha>, delivery}   (2026-11-17 부터 — 서브모듈 핀으로 굽는다)
 #   ghcr.io/uengine-oss/robo-posco-authority:{posco-web-<sha>, delivery}  (2026-11-19 부터 — main 의 api 로 굽는다)
+#   ghcr.io/uengine-oss/robo-posco-graph-age:{posco-web-<sha>, delivery}  (AGE 판 — deploy/graph-age, 2026-11-26)
 #
 # 나머지 일곱 장(graph-db · bolt · catalog · fabric · parser · gateway · wireframe)은
 # 여기서 굽지 않는다. 코드가 각 저장소 main 과 같아(11-18 실측) 2026-11-19 에 납품판 0.1.0 rdel-swp
@@ -47,6 +48,7 @@ on:
       - pyproject.toml
       - uv.lock
       - scripts/fetch-templates.sh
+      - deploy/graph-age/**
       - .github/workflows/posco-web-images.yml
   workflow_dispatch:
     inputs:
@@ -118,6 +120,12 @@ jobs:
             build_args: |
               RERANKER_MODEL=dragonkue/bge-reranker-v2-m3-ko
               RERANKER_REVISION=2aca5884ecac490192af9ebd86836d9073d826cd
+          # AGE 판 그래프 DB — 일반 postgres:15 + Apache AGE 1.8.0(2026-11-26). Supabase Postgres 이미지를
+          # 쓰지 않는다(deploy/graph-age/Dockerfile 머리말). AGE 는 커밋을 확인하고 굽는다.
+          - name: robo-posco-graph-age
+            dockerfile: deploy/graph-age/Dockerfile
+            context: deploy/graph-age
+            submodules: ""
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
     steps:

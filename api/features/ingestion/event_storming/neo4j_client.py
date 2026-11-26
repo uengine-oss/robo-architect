@@ -7,6 +7,7 @@ while keeping a single stable access point (`get_neo4j_client`) for the ingestio
 
 from __future__ import annotations
 
+import re
 import threading
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -60,6 +61,14 @@ from .neo4j_ops.user_stories import UserStoryOps
 #   **이 한 줄로 좁혔다.** 늘릴 때는 "다시 하면 통과하는가" 를 재고 늘린다.
 _RETRYABLE_MARKERS = ("pg_type_typname_nsp_index",)
 
+# AGE 판(2026-11-26): 같은 뿌리가 다른 말로 온다. AGE 는 CREATE · MERGE 가 처음 보는 라벨의
+# 표를 스스로 만드는데, 둘이 동시에 만들면 늦은 쪽이
+#     {message: relation "ReadModel" already exists}
+# 로 떨어진다(42P07). 다시 하면 이미 있는 표에 쓰므로 통과한다. 실측: 문서 → ES 에서 ReadModel
+# 셋을 gather 로 만들다 둘이 이것으로 빠졌다(EMITS · SCOPE_EVENT 도 같은 순간에 부딪쳤다).
+# **표 이름 하나짜리 이 문장만** 집는다 — 다른 "already exists"(graph · 역할)는 다시 해도 같다.
+_AGE_LABEL_RACE = re.compile(r'relation "[A-Za-z_][A-Za-z0-9_]*" already exists')
+
 # ── 다시 한 횟수를 **센다** (2026-10-20 · done15 §301) ────────────────
 #
 # 재시도를 넣고 나서 바로 알았다 — **성공한 재시도는 아무것도 안 남긴다.**
@@ -79,6 +88,8 @@ def _retry_kind(exc: BaseException) -> str:
     text = str(exc).lower()
     if "pg_type_typname_nsp_index" in text:
         return "pg_type"
+    if _AGE_LABEL_RACE.search(str(exc)):
+        return "age_label"
     if "deadlock" in text:
         return "deadlock"
     return "other_transient"
@@ -105,7 +116,7 @@ def is_retryable_graph_error(exc: BaseException) -> bool:
     """다시 해 볼 만한 일시적 오류인가."""
     if "TransientError" in type(exc).__name__:
         return True
-    return any(m in str(exc) for m in _RETRYABLE_MARKERS)
+    return any(m in str(exc) for m in _RETRYABLE_MARKERS) or bool(_AGE_LABEL_RACE.search(str(exc)))
 
 
 def retry_on_transient(fn, *, attempts: int = 4, base_delay: float = 0.25):

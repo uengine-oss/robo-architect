@@ -39,6 +39,20 @@ class Test무엇을_다시_하나:
         )
         assert is_retryable_graph_error(e)
 
+    def test_AGE_라벨_표_경쟁은_다시_한다(self):
+        """AGE 판(2026-11-26): 처음 보는 라벨의 표를 둘이 동시에 만들면 늦은 쪽이 이렇게 진다."""
+        e = _ClientError(
+            '{neo4j_code: Neo.ClientError.Statement.ArgumentError} '
+            '{message: relation "ReadModel" already exists}'
+        )
+        assert is_retryable_graph_error(e)
+
+    def test_다른_already_exists_는_다시_안_한다(self):
+        """graph · 역할 · 따옴표 안이 표 이름이 아닌 것은 다시 해도 같다."""
+        assert not is_retryable_graph_error(_ClientError('graph "shop" already exists'))
+        assert not is_retryable_graph_error(_ClientError('role "robo" already exists'))
+        assert not is_retryable_graph_error(_ClientError('relation "a b; drop" already exists'))
+
     def test_그_밖의_ClientError_는_다시_안_한다(self):
         """질의가 틀린 것은 다시 해도 같은 실패다."""
         assert not is_retryable_graph_error(
@@ -136,6 +150,19 @@ class Test몇_번_다시_했나:
 
         retry_on_transient(flaky, base_delay=0.0)
         assert retry_stats_snapshot() == {"pg_type": 1}
+
+    def test_AGE_라벨_경쟁은_따로_센다(self):
+        retry_stats_reset()
+        calls = {"n": 0}
+
+        def flaky():
+            calls["n"] += 1
+            if calls["n"] < 2:
+                raise _ClientError('{message: relation "EMITS" already exists}')
+            return "ok"
+
+        assert retry_on_transient(flaky, base_delay=0.0) == "ok"
+        assert retry_stats_snapshot() == {"age_label": 1}
 
     def test_끝까지_안_되면_포기한_것도_센다(self):
         retry_stats_reset()

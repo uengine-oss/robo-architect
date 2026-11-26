@@ -76,7 +76,7 @@ AGE 판(2026-11-26~)부터 Bolt 게이트웨이(graph-bolt)는 **AP 에서 돈�
 | `$GRAPH_HOST` · `SERVER_IP` · `ROBO_GRAPH_BIND` · `ROBO_AUTHORITY_BIND` | `ROBO_DB_SERVER_IP` (분할만) | 통합 서버는 서비스 이름으로 붙어 필요 없다 |
 | `$GRAPH_PASSWORD` · `GRAPH_PW` | `ROBO_GRAPH_PASSWORD` | 그래프 소유자 |
 | `$GRAPH_PG_PORT` | `ROBO_DB_PG_PORT` (분할만) | Bolt 포트는 AGE 판부터 없음(게이트웨이가 AP 안) |
-| — | `ROBO_GRAPH_ADMIN_PASSWORD` | AGE DB 관리자(supabase_admin) — graph-init · authority-init 만 쓴다 |
+| — | `ROBO_GRAPH_ADMIN_PASSWORD` | AGE DB 관리자(postgres) — graph-init · authority-init 만 쓴다 |
 | `$ROLE_SECRET` · `$JWT_SECRET` | `AUTH_ROLE_SECRET` · `AUTH_JWT_SECRET` | authority **와 architect-api 둘 다**(같은 값) |
 | `AUTH_RT_PW` | `ROBO_AUTHORITY_DB_PASSWORD` | robo_authority 역할 |
 | `OPER_PW` | — | 운영 DSN 은 소유자로(§결정 ④) |
@@ -139,7 +139,7 @@ msa-ez 는 비밀을 yml 에 바로 적는다. 여기서는 그러지 않는다 
 | architect-api | `robo-posco-architect-api` | 〃 | 〃 |
 | analyzer | `robo-posco-analyzer` | 〃 | 〃 (서브모듈 핀 · 2026-11-17 부터) |
 | authority (+init) | `robo-posco-authority` | 〃 | 〃 (2026-11-19 부터 · api 전체 · `CUSTOMER=posco`) |
-| graph-db (+graph-init) · graph-bolt | `robo-posco-graph-age` · `-graph-bolt-age` | `delivery` | AGE 판(2026-11-26~) — Supabase Postgres 15.8 + AGE 1.8.0 · ontological-db `age/main` 게이트웨이. Ontological 판(`robo-posco-graph-db` · `-graph-bolt`)은 되돌리기용으로 남긴다 |
+| graph-db (+graph-init) · graph-bolt | `robo-posco-graph-age` · `-graph-bolt-age` | `delivery` | AGE 판(2026-11-26~) — PostgreSQL 15 + AGE 1.8.0(`deploy/graph-age/` — Supabase Postgres 아님) · ontological-db `age/main` 게이트웨이. Ontological 판(`robo-posco-graph-db` · `-graph-bolt`)은 되돌리기용으로 남긴다 |
 | catalog · fabric · parser · gateway · wireframe | `robo-posco-*` | `delivery` | 〃 (코드가 각 저장소 main 과 같다 · 11-18 실측) |
 
 어느 커밋이 올라와 있나는 라벨 `org.opencontainers.image.revision` 으로 본다(운영-업데이트-가이드 §5).
