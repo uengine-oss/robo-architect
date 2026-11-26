@@ -80,8 +80,8 @@ else
     if [[ -z $v ]]; then
       case $name in
         SWP_SSO_*) ok "$name (비움 → 코드 기본값)";;
-        # 비우면 꺼지거나 기본값인 칸(.env.example 설명) — '비었다'로 잡지 않는다(2026-11-26)
-        ROBO_LLM_MODELS_ALLOW|ROBO_FIGMA_ENABLED|ROBO_STANDARD_MCP_URL|ROBO_STANDARD_ACTIVE_STATUSES)
+        # 비우면 꺼지거나 기본값인 칸 — .env.example 의 설명 참고
+        ROBO_LLM_MODELS_ALLOW|ROBO_FIGMA_ENABLED|ROBO_STANDARD_MCP_URL|ROBO_STANDARD_ACTIVE_STATUSES|ROBO_ANALYZER_MODEL)
           ok "$name (비움 → 기본값)";;
         *) bad "$name 비었다";;
       esac
@@ -106,6 +106,14 @@ else
     pgpt:*) ok "AI: P-GPT (analyzer pgpt)";;
     *) bad "ROBO_ANALYZER_LLM_CONFIG 는 pgpt | openai_gpt41";;
   esac
+  # 레거시 분석 모델(2026-11-26) — 가격표에 없으면 analyzer 가 첫 호출에서 UnknownModelPriceError 로 멈춘다.
+  am=$(val ROBO_ANALYZER_MODEL)
+  if [[ -n $am ]]; then
+    base=$(printf '%s' "$am" | sed -E 's/-[0-9]{4}-?[0-9]{2}-?[0-9]{2}$//')
+    if grep -qE "^  ($am|$base):" analyzer-llm/llm_pricing.yaml 2>/dev/null; then ok "레거시 분석 모델 $am (가격표에 있음)"
+    else bad "ROBO_ANALYZER_MODEL=$am 이 analyzer-llm/llm_pricing.yaml 에 없다 — 분석이 첫 호출에서 멈춘다"; fi
+    [[ $base == gpt-4.1* ]] || echo "  - 참고: 분석기 능력 봉인(문맥 · 출력 한도)은 gpt-4.1 기준이다 — $am 의 한도가 더 작으면 긴 배치가 잘릴 수 있다"
+  else ok "레거시 분석 모델 gpt-4.1 (기본)"; fi
   # yml 에 **박힌** 모델 설정 이름. `.env` 를 거치는 것은 위에서 이미 봤다.
   # 2026-11-11: ROBO_SEARCH_LLM_CONFIG 가 `gpt54_mini_openai`(api_base = api.openai.com)로
   # 박혀 있었다 — 위의 짝 검사는 ROBO_ANALYZER_LLM_CONFIG 만 보아 이 자리를 놓쳤다.
