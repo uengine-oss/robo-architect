@@ -94,7 +94,20 @@ if [[ $TAG != --no-images ]]; then
   else
   base=https://github.com/$REPO/releases/download/$TAG
   # 2 GiB 를 넘는 묶음은 조각으로 올라온다(<asset>.parts 에 조각 이름) — 있으면 조각을 받아 잇는다
-  if curl -fsSL -o "$ASSET.parts" "$base/$ASSET.parts" 2>/dev/null; then
+  # 조각 목록이 없으면(404) 한 파일 묶음이다. **그 밖의 실패는 숨기지 않는다** — 2026-11-25 포스코망은
+  # github.com 은 열려 있고 파일이 실제로 내려오는 release-assets.githubusercontent.com 만 막혀,
+  # 여기서 조용히 한 파일로 떨어진 뒤 "404" 만 보였다.
+  code=$(curl -sSL -o "$ASSET.parts" -w '%{http_code}' "$base/$ASSET.parts" 2>"$ASSET.parts.err") || true
+  if [[ $code != 200 && $code != 404 ]]; then
+    echo "X 묶음을 받지 못했다 (HTTP ${code:-000}): $(tail -1 "$ASSET.parts.err" 2>/dev/null)" >&2
+    echo "  github.com 은 닿는데 파일 주소(release-assets.githubusercontent.com)가 막힌 망일 수 있다 — 확인:" >&2
+    echo "    curl -sSI --max-time 15 https://release-assets.githubusercontent.com/ | head -1" >&2
+    echo "  막혔으면 받을 수 있는 곳에서 $ASSET(.part00 · .part01 … 를 cat 으로 이어 붙인 것) · $ASSET.sha256 을 이 폴더로 옮기고:" >&2
+    case $ROLE in db) r="split.db ";; ap) r="split.ap ";; *) r="";; esac; echo "    OFFLINE=1 bash update.sh $r$TAG" >&2
+    rm -f "$ASSET.parts" "$ASSET.parts.err"; exit 1
+  fi
+  rm -f "$ASSET.parts.err"
+  if [[ $code == 200 ]]; then
     echo "  조각 $(wc -l < "$ASSET.parts")개"
     while read -r part; do
       [[ -n $part ]] || continue
