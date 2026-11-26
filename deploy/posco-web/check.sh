@@ -78,7 +78,13 @@ else
     [[ $FILE != *split* && $name == ROBO_DB_* ]] && continue
     v=$(val "$name")
     if [[ -z $v ]]; then
-      case $name in SWP_SSO_*) ok "$name (비움 → 코드 기본값)";; *) bad "$name 비었다";; esac
+      case $name in
+        SWP_SSO_*) ok "$name (비움 → 코드 기본값)";;
+        # 비우면 꺼지거나 기본값인 칸(.env.example 설명) — '비었다'로 잡지 않는다(2026-11-26)
+        ROBO_LLM_MODELS_ALLOW|ROBO_FIGMA_ENABLED|ROBO_STANDARD_MCP_URL|ROBO_STANDARD_ACTIVE_STATUSES)
+          ok "$name (비움 → 기본값)";;
+        *) bad "$name 비었다";;
+      esac
     elif [[ $v == *CHANGE_ME* ]]; then bad "$name 를 아직 안 채웠다"
     else ok "$name (${#v}자)"; fi
   done < <(grep -oE '^[A-Z0-9_]+' .env.example | sort -u)
