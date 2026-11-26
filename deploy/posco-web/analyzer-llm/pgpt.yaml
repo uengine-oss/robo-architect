@@ -7,7 +7,9 @@
 # 나머지 값은 이미지 안 pgpt.yaml(analyzer 8d4a71d9)과 같다.
 provider: openai
 api_base: ${ROBO_AI_BASE_URL}
-model: gpt-4.1
+# 모델도 .env(ROBO_ANALYZER_MODEL)로 — 비면 gpt-4.1 (2026-11-26 · analyzer 가 model 의 ${VAR:-기본값} 을 푸는 판부터).
+# 가격표(llm_pricing.yaml)에 있는 이름만 — 없으면 첫 호출에서 UnknownModelPriceError 로 멈춘다(check.sh 가 본다).
+model: ${ROBO_ANALYZER_MODEL:-gpt-4.1}
 max_tokens: 16000
 timeout_seconds: 300
 verify_ssl: true

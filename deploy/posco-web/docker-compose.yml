@@ -423,6 +423,7 @@ services:
       # 둘 다 gpt-4.1 이라 위·아래의 능력 봉인과 맞는다. 주소를 env 로 덮는 길이 analyzer 에 없어 파일로 고른다.
       ROBO_LLM_CONFIG: ${ROBO_ANALYZER_LLM_CONFIG:-pgpt}
       ROBO_AI_BASE_URL: ${ROBO_AI_BASE_URL:?}   # analyzer-llm/pgpt.yaml 의 api_base — architect-api 와 같은 P-GPT 주소
+      ROBO_ANALYZER_MODEL: ${ROBO_ANALYZER_MODEL:-}   # analyzer-llm/pgpt.yaml 의 model — 비면 gpt-4.1 (2026-11-26)
       ROBO_LLM_MODEL_RUNTIME_CAPABILITIES_REF: llm/capabilities/gpt41_openai_2025_04_14.yaml
       ROBO_LLM_MODEL_RUNTIME_CAPABILITIES_SHA256: 09904ac41504b7128588dd32ef0f8c2dabf80366209bcad3bca6d2c730055df8
       ROBO_LLM_REPETITION_GUARD: "true"
