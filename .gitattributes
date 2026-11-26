@@ -18,3 +18,5 @@
 
 # tiktoken 사전 — tiktoken 이 sha256 으로 대조한다. 줄바꿈을 한 글자도 바꾸지 않는다.
 deploy/posco-web/tiktoken-cache/* -text
+# 이미지 안에서 psql · sh 가 읽는다 — Windows 에서 구워도 CRLF 가 들어가지 않게(2026-11-26)
+deploy/graph-age/** text eol=lf
